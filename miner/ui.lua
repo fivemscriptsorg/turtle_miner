@@ -165,8 +165,19 @@ function drawDashboard()
     if state.hasEnvDetector then per = per .. "[EnvD] " end
     if state.hasGeoScanner then per = per .. "[Geo] " end
     if state.hasRemote    then per = per .. "[Rem] " end
+    if state.hasGPS       then per = per .. "[GPS] " end
     if per == "" then per = "(sin peripherals)" end
     term.write("Per  : " .. per)
+
+    -- ore map size (si hay swarm activo)
+    if state.oreMap then
+        local n = 0
+        for _ in pairs(state.oreMap) do n = n + 1 end
+        if n > 0 then
+            term.setCursorPos(28, 9)
+            term.write("OreM:"..n)
+        end
+    end
 
     -- Tiempo (usa epoch para sobrevivir reinicios)
     local elapsed = (os.epoch("utc") - (state.startEpoch or os.epoch("utc"))) / 1000

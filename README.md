@@ -87,6 +87,31 @@ Comandos (teclado, en el cliente):
 
 La turtle hace broadcast del status cada 5s. Si hay varias turtles en rednet, `client` las lista con su hostname `miner-<id>`.
 
+## Swarm (varias turtles cooperando)
+
+Si tienes GPS activo (3+ computers fijas corriendo `gps host <x> <y> <z>`), las turtles comparten automáticamente un **ore map** en rednet:
+
+- Cuando una turtle detecta un mineral, hace broadcast con su posición **absoluta**.
+- Todas las turtles que escuchen lo guardan en su `state.oreMap`.
+- Cuando una turtle llega y lo cava, hace broadcast de `ore_gone` y todas lo sacan.
+- Al arrancar, una turtle nueva pide `sync_request` y las existentes le mandan su mapa.
+
+En el dashboard verás `[GPS]` y `OreM:<N>` indicando cuántos ores compartidos conoce.
+
+### Fleet mode en el cliente
+
+`client` → elige `[2] Fleet dashboard`: lista todas las turtles de la red en tabla con posición world/local, fuel, estado, progreso y ores encontrados. Además muestra el mapa combinado de descubrimientos de todas las turtles.
+
+Tecla `F` dentro del fleet mode: envía configuración a todas (feature preliminar — las turtles aún no auto-aplican; pendiente).
+
+Lo que aún NO hace el swarm (pensado pero no implementado):
+- Auto-navegar a un ore descubierto por otra turtle
+- Job queue real (pedir "siguiente trabajo")
+- Cofre de refuel común compartido
+- Detección activa de turtles "muertas"
+
+Las primitivas (`swarm.nearestUnclaimed`, `swarm.claimOre`) están listas para construir esto encima.
+
 ## Notas técnicas
 
 - Posición se trackea relativa al punto de inicio: (0,0,0) mirando +X.

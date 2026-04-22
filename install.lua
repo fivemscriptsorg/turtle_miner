@@ -23,6 +23,7 @@ local FILES = {
     "miner/inventory.lua",
     "miner/movement.lua",
     "miner/remote.lua",
+    "miner/swarm.lua",
     "miner/mining.lua",
 }
 

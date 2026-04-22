@@ -64,12 +64,23 @@ function snapshot()
     if fuel == "unlimited" then fuel = -1 end
     local used = 0
     pcall(function() used = inventory.slotsUsed() end)
+    local abs = nil
+    if swarm and swarm.currentAbs then
+        pcall(function() abs = swarm.currentAbs() end)
+    end
+    local mapSize = 0
+    if swarm and swarm.mapSize then
+        pcall(function() mapSize = swarm.mapSize() end)
+    end
     return {
         hostname      = state.hostname,
         x             = state.x,
         y             = state.y,
         z             = state.z,
         facing        = state.facing,
+        abs           = abs,                   -- coords absolutas si hay GPS
+        origin        = state.origin,
+        hasGPS        = state.hasGPS == true,
         fuel          = fuel,
         pattern       = state.pattern,
         currentStep   = state.currentStep or 0,
@@ -83,7 +94,7 @@ function snapshot()
         slotsUsed     = used,
         sliceLane     = state.sliceLane or 0,
         remoteCmd     = state.remoteCmd,
-        lastStatus    = state.lastStatus,
+        oreMapSize    = mapSize,
         startEpoch    = state.startEpoch,
     }
 end
@@ -98,6 +109,14 @@ end
 
 function handleMessage(senderId, msg)
     if type(msg) ~= "table" then return end
+
+    -- Primero: mensajes swarm (peer-to-peer entre turtles)
+    if swarm and swarm.handleSwarmMessage then
+        local handled = false
+        pcall(function() handled = swarm.handleSwarmMessage(senderId, msg) end)
+        if handled then return end
+    end
+
     local action = msg.action
     if action == "status" or action == "ping" then
         reply(senderId, { kind = "status", data = snapshot() })

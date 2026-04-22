@@ -12,6 +12,7 @@ os.loadAPI("miner/inventory.lua")
 os.loadAPI("miner/movement.lua")
 os.loadAPI("miner/peripherals.lua")
 os.loadAPI("miner/remote.lua")
+os.loadAPI("miner/swarm.lua")
 os.loadAPI("miner/mining.lua")
 
 -- State global accesible por todos los modulos
@@ -53,6 +54,11 @@ local function defaultState()
         hasRemote = false,
         hostname = nil,
         remoteCmd = nil,
+
+        -- swarm (GPS + ore map compartido, no persiste)
+        hasGPS = false,
+        origin = nil,           -- coords ABS de nuestro (0,0,0) local
+        oreMap = {},            -- tabla compartida, clave "x_y_z"
     }
 end
 
@@ -104,6 +110,13 @@ local function main()
 
     peripherals.detect()
     remote.init()
+
+    -- GPS: necesita modem abierto (remote.init lo abrio). Si hay fix,
+    -- state.origin se rellena. Si no, swarm opera en local-only.
+    if state.hasRemote then
+        swarm.initGPS()
+        swarm.requestSync() -- pedir oreMap a otras turtles
+    end
 
     if not state.resuming then
         config.runMenu()

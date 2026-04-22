@@ -25,6 +25,23 @@ local function inspectAndLog(direction)
         ui.logOre(data.name, state.y)
         if state.hasRemote then
             pcall(remote.notifyEvent, "ore", { name = data.name, y = state.y })
+            -- Coord del bloque del ore (relativa a posicion actual segun direccion)
+            local orePos = { x = state.x, y = state.y, z = state.z }
+            if direction == "up" then
+                orePos.y = orePos.y + 1
+            elseif direction == "down" then
+                orePos.y = orePos.y - 1
+            else
+                -- frente: depende del facing
+                if state.facing == 0 then orePos.x = orePos.x + 1
+                elseif state.facing == 1 then orePos.z = orePos.z + 1
+                elseif state.facing == 2 then orePos.x = orePos.x - 1
+                elseif state.facing == 3 then orePos.z = orePos.z - 1
+                end
+            end
+            pcall(swarm.broadcastOreSpotted, orePos, data.name)
+            -- Lo vamos a cavar ahora mismo, asi que tambien lo anunciamos como gone
+            pcall(swarm.broadcastOreGone, orePos)
         end
         return true
     end

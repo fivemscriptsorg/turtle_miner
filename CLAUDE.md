@@ -116,6 +116,32 @@ When `mining.run()` returns, `parallel.waitForAny` kills the listener. The liste
 
 Messages are always plain Lua tables. Client → turtle: `{ action = "pause" | "resume" | "home" | "stop" | "status" | "ping" }`. Turtle → client: `{ kind = "status", data = <snapshot> }`, `{ kind = "ack", action = "..." }`, `{ kind = "event", type = "...", data = {...} }`. Snapshots never include userdata (peripherals) — see `remote.snapshot()` for the whitelist.
 
+## Swarm (multi-turtle cooperation)
+
+`miner/swarm.lua` adds a data layer for multiple turtles sharing a world. It does NOT add pathfinding or active job distribution — it's the primitives on which those would sit.
+
+**GPS**: `swarm.initGPS()` calls `gps.locate()` after the modem is open. On success it stores `state.origin` = the ABS world coords of the turtle's local `(0,0,0)`. Then `swarm.toAbs(lx,ly,lz)` and `swarm.toLocal(ax,ay,az)` convert between frames. If GPS fails (no hosts / out of range), origin stays `nil` and cross-turtle coord sharing is disabled — each turtle still works fine in local-only mode.
+
+Requires 3+ GPS host computers set up in the world (`gps host <x> <y> <z>` per host) and the turtle's modem in range of them.
+
+**Ore map**: shared `state.oreMap`, keyed by `"x_y_z"` of absolute coords, each entry `{x, y, z, name, seenAt, by, claimedBy, claimUntil}`. Auto-prunes entries older than 5 min, caps at 500 entries. Populated by:
+- `swarm.broadcastOreSpotted(localPos, name)` — converts to ABS, broadcasts `ore_spotted`, inserts locally.
+- `swarm.broadcastOreGone(localPos)` — broadcasts `ore_gone`, removes locally.
+
+Both are called from `mining.inspectAndLog` whenever an ore is found and dug.
+
+**Message handling**: `swarm.handleSwarmMessage(sender, msg)` is called first inside `remote.handleMessage`. It handles `ore_spotted`, `ore_gone`, `ore_claim`, `sync_request`, `sync_dump`. Returns `true` if it handled the message so `remote` doesn't double-handle.
+
+**Joining the network**: `startup.lua` calls `swarm.requestSync()` after init. Any other turtle on the net replies with `{kind="sync_dump", oreMap=...}`, which gets merged in.
+
+**Not yet implemented** (hooks are there, logic isn't): claim-and-chase (idle turtle navigates to a known unclaimed ore), job queue, refuel base, dead-turtle detection. `nearestUnclaimed(fromAbs, maxDist)` and `claimOre(absPos, byId, ttl)` are ready for consumers to use.
+
+## Fleet dashboard (client)
+
+`client.lua` has two modes. `single` is the original: one turtle, detailed dashboard, pause/resume/home/stop. `fleet` shows all turtles in a tabular dashboard (world/local pos, fuel, status, progress, ores) plus a combined ore-map counter. A `launchFleet` skeleton sends `configure` messages with `zOffset` per turtle — the turtle side doesn't auto-apply configure yet (stays as roadmap).
+
+The fleet listener merges `ore_spotted` from any sender into a local map so the operator sees a global view.
+
 ## Advanced Peripherals
 
 All calls into `envDetector`/`geoScanner` are wrapped in `pcall`. They silently degrade to "no data" on cooldown, insufficient FE, disconnected peripheral, or API version skew. Don't remove the `pcall` wrapping even though it looks redundant — different AP versions have renamed methods.
