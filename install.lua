@@ -8,7 +8,7 @@
 --   install
 -- ============================================================
 
-local BASE_URL = nil -- ej: "https://raw.githubusercontent.com/USUARIO/REPO/main/turtle-miner"
+local BASE_URL = "https://raw.githubusercontent.com/fivemscriptsorg/turtle_miner/main"
 
 local FILES = {
     "startup.lua",
