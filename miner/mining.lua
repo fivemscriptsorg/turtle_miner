@@ -2,6 +2,12 @@
 -- MINING MODULE
 -- Logica de branch mining y tunnel mining.
 -- Soporta tunnelWidth=1 (rapido 1x3) y tunnelWidth=3 (completo 3x3).
+--
+-- OPTIMIZACION: patron alternante. Tras cavar un lateral la turtle
+-- NO vuelve al centro; cruza al lado opuesto y termina el slice en
+-- ese lado. El slice siguiente arranca desde ese lado y vuelve al
+-- opuesto. Solo se vuelve al centro al final del pass. Ahorra ~2
+-- forwards por slice vs el patron centrado.
 -- ============================================================
 
 -- ============================================================
@@ -32,68 +38,84 @@ local function digCounting(fn, detectFn)
 end
 
 -- ============================================================
--- CARVE FULL SLICE
--- Mina un slice completo del tunel y avanza la turtle un bloque.
--- Si tunnelWidth=3: carva las 3 columnas (9 bloques por slice).
--- Si tunnelWidth=1: solo la columna central (3 bloques por slice).
---
--- IMPORTANTE: turtle.digUp/digDown/inspectUp son facing-independent,
--- siempre operan sobre el bloque directamente encima/debajo de la
--- turtle. Por eso para cavar las esquinas laterales hay que mover
--- fisicamente la turtle a la columna lateral.
+-- LANE TRACKING
+-- sliceLane: offset lateral respecto a la centerline del pass actual.
+--   0 = centro, -1 = izquierda, +1 = derecha (relativo a passFacing)
+-- passFacing: direccion "adelante" del pass actual.
 -- ============================================================
 
-local function carveCurrentColumnVertical()
-    -- Cava arriba y abajo de la posicion actual (inspecciona y cuenta ores)
-    inspectAndLog("up")
-    inspectAndLog("down")
+local function moveLaterally(diff)
+    if diff == 0 then return true end
+    local passF = state.passFacing
+    local dirFacing = (diff > 0) and ((passF + 1) % 4) or ((passF + 3) % 4)
+    movement.faceDirection(dirFacing)
+    for _ = 1, math.abs(diff) do
+        inspectAndLog("forward")
+        digCounting(turtle.dig, turtle.detect)
+        if not movement.safeForward() then
+            return false
+        end
+    end
+    state.sliceLane = (state.sliceLane or 0) + diff
+    return true
+end
+
+local function returnToPassCenter()
+    local lane = state.sliceLane or 0
+    if lane ~= 0 then
+        moveLaterally(-lane)
+    end
+    movement.faceDirection(state.passFacing)
+    state.sliceLane = 0
+end
+
+-- ============================================================
+-- CARVE FULL SLICE (alternante)
+-- ============================================================
+
+local function carveVerticalHere()
+    inspectAndLog("up"); inspectAndLog("down")
     digCounting(turtle.digUp, turtle.detectUp)
     digCounting(turtle.digDown, turtle.detectDown)
 end
 
-local function carveSideColumn(turnFn)
-    -- Asume turtle en columna central, facing forward.
-    -- Gira, avanza al lateral, cava up+down, vuelve al centro, re-alinea.
-    local f0 = state.facing
-    turnFn()
-    inspectAndLog("forward")
-    digCounting(turtle.dig, turtle.detect)
-    if not movement.safeForward() then
-        movement.faceDirection(f0)
-        return false
-    end
-    carveCurrentColumnVertical()
-    movement.turnAround()
-    if not movement.safeForward() then
-        -- algo raro: no podemos volver. re-alineamos de todos modos
-        movement.faceDirection(f0)
-        return false
-    end
-    movement.faceDirection(f0)
-    return true
-end
-
 local function carveFullSlice()
-    -- Cava techo+suelo de la columna central actual
-    inspectAndLog("forward")
-    carveCurrentColumnVertical()
-    digCounting(turtle.dig, turtle.detect)
+    local passF = state.passFacing
 
-    -- Pausa breve por grava/arena que caiga
-    sleep(0.15)
+    -- Asegurarse de mirar hacia adelante antes de avanzar
+    movement.faceDirection(passF)
+
+    -- Avanzar en el lane actual: cavar f+u+d, mover, cavar u+d en la nueva pos
+    inspectAndLog("forward")
+    digCounting(turtle.dig, turtle.detect)
+    digCounting(turtle.digUp, turtle.detectUp)
+    digCounting(turtle.digDown, turtle.detectDown)
+    sleep(0.15) -- grava/arena que caiga
     if turtle.detectUp() then turtle.digUp() end
 
-    -- Avanzar al nuevo slice
     if not movement.safeForward() then return false end
 
-    -- Cavar techo+suelo del nuevo centro
-    carveCurrentColumnVertical()
+    carveVerticalHere()
 
-    -- Si el tunel es ancho, cavar laterales
-    local width = state.tunnelWidth or 3
-    if width >= 3 then
-        carveSideColumn(movement.turnLeft)
-        carveSideColumn(movement.turnRight)
+    if (state.tunnelWidth or 3) < 3 then return true end
+
+    -- Visitar los otros 2 lanes en orden que termine alejado del de inicio
+    local lane = state.sliceLane or 0
+    local visits
+    if lane == 0 then
+        visits = { -1, 1 }      -- centro -> izq -> der (termina en der)
+    elseif lane > 0 then
+        visits = { 0, -1 }      -- der -> centro -> izq (termina en izq)
+    else
+        visits = { 0, 1 }       -- izq -> centro -> der (termina en der)
+    end
+
+    for _, targetLane in ipairs(visits) do
+        local diff = targetLane - (state.sliceLane or 0)
+        if not moveLaterally(diff) then
+            return true -- lateral bloqueado; el avance del slice si se hizo
+        end
+        carveVerticalHere()
     end
 
     return true
@@ -114,11 +136,12 @@ end
 
 -- ============================================================
 -- BRANCH
--- Una rama de `length` bloques y vuelta al origen.
--- Trackea los pasos realmente avanzados para no pasarse al volver.
 -- ============================================================
 
 local function mineBranch(length)
+    state.sliceLane = 0
+    state.passFacing = state.facing
+
     local advanced = 0
     for i = 1, length do
         ui.drawDashboard()
@@ -136,7 +159,9 @@ local function mineBranch(length)
         end
     end
 
-    -- Volver exactamente los pasos avanzados
+    -- Centrar antes de volver para que el backtrack sea recto
+    returnToPassCenter()
+
     ui.setStatus("Volviendo del ramal")
     movement.turnAround()
     for _ = 1, advanced do
@@ -146,11 +171,14 @@ local function mineBranch(length)
 end
 
 -- ============================================================
--- BRANCH MINING (shaft principal + ramas)
+-- BRANCH MINING
 -- ============================================================
 
 local function runBranchMining()
     local facingStart = state.facing
+    state.sliceLane = 0
+    state.passFacing = facingStart
+
     local startStep = (state.currentStep or 0) + 1
 
     for step = startStep, state.shaftLength do
@@ -160,16 +188,24 @@ local function runBranchMining()
         ui.setStatus("Shaft "..step.."/"..state.shaftLength)
         geoHint()
 
-        -- cada branchSpacing bloques, hacer ramas (step>1 para no cavar en la entrada)
         if step > 1 and (step % state.branchSpacing == 0) then
+            -- Asegurarse de estar en el centro del shaft antes de ramificar
+            returnToPassCenter()
+
             movement.turnLeft()
             ui.setStatus("Rama izquierda")
             mineBranch(state.branchLength)
+
             movement.turnAround()
             ui.setStatus("Rama derecha")
             mineBranch(state.branchLength)
+
             movement.turnLeft()
             movement.faceDirection(facingStart)
+
+            -- Restaurar contexto del shaft
+            state.passFacing = facingStart
+            state.sliceLane = 0
         end
 
         if not carveFullSlice() then
@@ -181,7 +217,6 @@ local function runBranchMining()
             inventory.handleFullInventory()
         end
 
-        -- fuel proactivo: necesitamos poder volver
         local fuel = turtle.getFuelLevel()
         if fuel ~= "unlimited" then
             local needed = math.abs(state.x) + 10
@@ -193,13 +228,18 @@ local function runBranchMining()
 
         persist.save()
     end
+
+    returnToPassCenter()
 end
 
 -- ============================================================
--- TUNNEL SIMPLE (sin ramas)
+-- TUNNEL SIMPLE
 -- ============================================================
 
 local function runTunnelMining()
+    state.sliceLane = 0
+    state.passFacing = state.facing
+
     local startStep = (state.currentStep or 0) + 1
 
     for step = startStep, state.shaftLength do
@@ -220,6 +260,8 @@ local function runTunnelMining()
 
         persist.save()
     end
+
+    returnToPassCenter()
 end
 
 -- ============================================================
@@ -228,12 +270,10 @@ end
 
 local function returnToStart()
     ui.setStatus("Volviendo al inicio")
-    -- girar hacia -X para volver
     movement.faceDirection(2)
     while state.x > 0 do
         if not movement.safeForward() then break end
     end
-    -- alinear Z si quedo descentrado
     while state.z ~= 0 do
         if state.z > 0 then
             movement.faceDirection(3)
@@ -242,7 +282,6 @@ local function returnToStart()
         end
         if not movement.safeForward() then break end
     end
-    -- dejar mirando hacia el tunel
     movement.faceDirection(0)
 
     if inventory.slotsUsed() > 0 then
@@ -278,6 +317,5 @@ function run()
 
     returnToStart()
 
-    -- limpiar checkpoint al terminar limpiamente
     persist.clear()
 end

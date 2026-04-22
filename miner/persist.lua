@@ -16,6 +16,7 @@ local PERSIST_FIELDS = {
     "tunnelWidth", "tunnelHeight",
     "blocksMined", "oresFound", "chestsPlaced",
     "currentStep",
+    "sliceLane", "passFacing",
     "oresLog",
     "startEpoch",
 }

@@ -66,14 +66,16 @@ function runMenu()
         term.write("Fuel       : INF (sin limite)")
     else
         term.write("Fuel       : " .. fuel)
-        -- estimacion rapida: costo por slice segun ancho
-        local perSlice = (state.tunnelWidth == 1) and 3 or 9
-        local estimate = state.shaftLength * perSlice
+        -- estimacion: con alternante, ~3 forwards/slice (width=3) o 1 (width=1)
+        local perSlice = (state.tunnelWidth == 1) and 1 or 3
+        local estimate = state.shaftLength * perSlice + 2 -- +2 close-to-center
         if pattern == "branch" then
             local numBranches = math.floor(state.shaftLength / state.branchSpacing) * 2
-            estimate = estimate + numBranches * state.branchLength * perSlice
+            -- cada rama: perSlice * L (in) + 1 (center) + L (out)
+            estimate = estimate + numBranches * (state.branchLength * (perSlice + 1) + 1)
         end
         estimate = estimate + state.shaftLength -- vuelta al inicio
+        estimate = math.floor(estimate * 1.15) -- margen 15%
         term.setCursorPos(2, 10)
         term.write("Estimado   : " .. estimate .. " (aprox)")
         if fuel < estimate then
