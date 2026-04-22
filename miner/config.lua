@@ -37,6 +37,13 @@ function runMenu()
         )
     end
 
+    -- 3b) Ancho del tunel (1 = rapido 1x3, 3 = completo 3x3)
+    local width = ui.menu("ANCHO DEL TUNEL", {
+        { label = "3 bloques (3x3 completo)", value = 3 },
+        { label = "1 bloque (1x3 rapido)",    value = 1 },
+    }, 1)
+    state.tunnelWidth = width
+
     -- 4) Confirmacion y chequeo de fuel
     ui.clear()
     ui.hline(1, "=")
@@ -46,9 +53,11 @@ function runMenu()
     term.write("Patron     : " .. pattern)
     term.setCursorPos(2, 6)
     term.write("Shaft      : " .. state.shaftLength .. " bloques")
+    term.setCursorPos(2, 7)
+    term.write("Ancho      : " .. state.tunnelWidth .. "x3")
     if pattern == "branch" then
-        term.setCursorPos(2, 7)
-        term.write("Ramas      : " .. state.branchLength .. " cada " .. state.branchSpacing .. " bloques")
+        term.setCursorPos(2, 8)
+        term.write("Ramas      : " .. state.branchLength .. " cada " .. state.branchSpacing)
     end
 
     local fuel = turtle.getFuelLevel()
@@ -57,12 +66,14 @@ function runMenu()
         term.write("Fuel       : INF (sin limite)")
     else
         term.write("Fuel       : " .. fuel)
-        -- estimacion rapida
-        local estimate = state.shaftLength * 6
+        -- estimacion rapida: costo por slice segun ancho
+        local perSlice = (state.tunnelWidth == 1) and 3 or 9
+        local estimate = state.shaftLength * perSlice
         if pattern == "branch" then
             local numBranches = math.floor(state.shaftLength / state.branchSpacing) * 2
-            estimate = estimate + numBranches * state.branchLength * 6
+            estimate = estimate + numBranches * state.branchLength * perSlice
         end
+        estimate = estimate + state.shaftLength -- vuelta al inicio
         term.setCursorPos(2, 10)
         term.write("Estimado   : " .. estimate .. " (aprox)")
         if fuel < estimate then

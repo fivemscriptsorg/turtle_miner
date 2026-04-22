@@ -136,16 +136,24 @@ function dropJunk()
     return dropped
 end
 
--- Compacta items iguales entre slots
+-- Compacta items iguales entre slots.
+-- Cachea los details una sola vez (16 llamadas en vez de O(n^2)).
 function compact()
+    local names = {}
     for i = 1, 16 do
-        local detailI = turtle.getItemDetail(i)
-        if detailI then
+        local d = turtle.getItemDetail(i)
+        names[i] = d and d.name or nil
+    end
+
+    for i = 1, 16 do
+        if names[i] and turtle.getItemCount(i) > 0 then
             for j = i + 1, 16 do
-                local detailJ = turtle.getItemDetail(j)
-                if detailJ and detailJ.name == detailI.name then
+                if names[j] == names[i] and turtle.getItemCount(j) > 0 then
                     turtle.select(j)
                     turtle.transferTo(i)
+                    if turtle.getItemCount(j) == 0 then
+                        names[j] = nil
+                    end
                 end
             end
         end

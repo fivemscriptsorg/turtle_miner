@@ -1,4 +1,4 @@
-# Turtle Miner v1.0
+# Turtle Miner v1.1
 
 Programa de minería eficiente para turtles de **CC:Tweaked** con soporte para periféricos de **Advanced Peripherals** (Environment Detector y Geo Scanner).
 
@@ -6,7 +6,8 @@ Diseñado para **turtles no-advanced** (pantalla 39x13, sin color). Todo el rend
 
 ## Qué hace
 
-- **Branch mining 3x3** al estilo de los mejores mineros: túnel principal de 3 de alto y 3 de ancho, con ramas laterales que salen cada X bloques (por defecto cada 3) hacia izquierda y derecha.
+- **Branch mining** con ancho configurable (1x3 rápido o 3x3 completo): túnel principal con ramas laterales cada X bloques. El 3x3 cava todas las columnas correctamente (centro + laterales).
+- **Resume tras apagado**: el estado se guarda en `miner/state.dat` cada paso. Si el chunk se descarga o la turtle se apaga, al reiniciar ofrece reanudar desde el último paso completado.
 - **Auto-refuel inteligente**: cuando el fuel baja del umbral, busca carbón (`minecraft:coal`) o carbón vegetal (`minecraft:charcoal`) en el inventario y lo quema, dejando una reserva.
 - **Colocación de cofres sin bloquear paso**: cuando el inventario está casi lleno, gira a la derecha, cava un hueco en la pared lateral, coloca el cofre dentro (así no obstruye el túnel) y vacía todo menos fuel y cofres.
 - **Detección de minerales** con `turtle.inspect()` en las tres direcciones. Lleva log de lo encontrado.
@@ -23,6 +24,7 @@ turtle-miner/
 ├── miner/
 │   ├── ui.lua               ← splash, menús, dashboard
 │   ├── config.lua           ← menú inicial de configuración
+│   ├── persist.lua          ← save/load de state para resume
 │   ├── peripherals.lua      ← detección de Env Detector + Geo Scanner
 │   ├── inventory.lua        ← refuel, filtrado, cofres
 │   ├── movement.lua         ← movimiento seguro + tracking XYZ

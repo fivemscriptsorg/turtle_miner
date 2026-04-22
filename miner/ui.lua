@@ -41,8 +41,11 @@ function splash()
     for i, line in ipairs(art) do
         center(i, line)
     end
-    center(h, "Iniciando...")
-    sleep(1.5)
+    center(h, "Iniciando... (pulsa cualquier tecla)")
+    parallel.waitForAny(
+        function() sleep(1.5) end,
+        function() os.pullEvent("key") end
+    )
 end
 
 -- Menu generico (usado por config)
@@ -164,8 +167,8 @@ function drawDashboard()
     if per == "" then per = "(sin peripherals)" end
     term.write("Per  : " .. per)
 
-    -- Tiempo
-    local elapsed = os.clock() - state.startTime
+    -- Tiempo (usa epoch para sobrevivir reinicios)
+    local elapsed = (os.epoch("utc") - (state.startEpoch or os.epoch("utc"))) / 1000
     local mins = math.floor(elapsed / 60)
     local secs = math.floor(elapsed % 60)
     term.setCursorPos(2, 10)
@@ -185,10 +188,16 @@ function setStatus(text)
     term.write(text)
 end
 
+local ORES_LOG_MAX = 50
+
 function logOre(name, y)
     local short = name:gsub("minecraft:", ""):gsub("_ore", "")
     short = short:gsub("deepslate_", "")
     table.insert(state.oresLog, { name = short, y = y })
+    -- cap al tamano maximo: en runs largos no explota memoria
+    while #state.oresLog > ORES_LOG_MAX do
+        table.remove(state.oresLog, 1)
+    end
 end
 
 function finalReport()
@@ -197,7 +206,7 @@ function finalReport()
     center(2, "MINERIA COMPLETADA")
     hline(3, "=")
 
-    local elapsed = os.clock() - state.startTime
+    local elapsed = (os.epoch("utc") - (state.startEpoch or os.epoch("utc"))) / 1000
     local mins = math.floor(elapsed / 60)
     local secs = math.floor(elapsed % 60)
 

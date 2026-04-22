@@ -1,6 +1,7 @@
 -- ============================================================
 -- MINING MODULE
--- Logica de branch mining y tunnel mining 3x3.
+-- Logica de branch mining y tunnel mining.
+-- Soporta tunnelWidth=1 (rapido 1x3) y tunnelWidth=3 (completo 3x3).
 -- ============================================================
 
 -- ============================================================
@@ -21,156 +22,157 @@ local function inspectAndLog(direction)
     return false
 end
 
--- ============================================================
--- DIG 3x3
--- La turtle se mueve en la fila central (y=0 relativo al suelo del tunel).
--- Para cada bloque de avance: cava adelante, arriba y abajo.
--- Luego sube una vez y cava arriba otra vez para hacerlo 3 de alto.
--- Para hacerlo 3 de ancho, en cada paso cavamos la pared izquierda y derecha tambien.
--- ============================================================
-
--- Minar el cubo 3x3 ALREDEDOR de la posicion actual (sin avanzar).
--- Asume que la turtle esta en la columna central, fila del medio.
-local function mine3x3Slice()
-    -- Inspeccionar antes de cavar (para loguear ores)
-    inspectAndLog("forward")
-    inspectAndLog("up")
-    inspectAndLog("down")
-
-    -- cavar frente, arriba, abajo
-    if turtle.detect() then
-        turtle.dig()
+local function digCounting(fn, detectFn)
+    if detectFn() then
+        fn()
         state.blocksMined = state.blocksMined + 1
+        return true
     end
-    if turtle.detectUp() then
-        turtle.digUp()
-        state.blocksMined = state.blocksMined + 1
-    end
-    if turtle.detectDown() then
-        turtle.digDown()
-        state.blocksMined = state.blocksMined + 1
-    end
-
-    -- pequena pausa para grava/arena que cae
-    sleep(0.1)
-    if turtle.detectUp() then turtle.digUp() end
+    return false
 end
 
--- Mina un paso del tunel 3x3 y avanza.
--- Patron optimizado: la turtle va en el medio-inferior, sube una vez para cubrir
--- el medio-superior, vuelve a bajar. Izquierda y derecha se cubren al costado.
-local function tunnelStep()
-    -- Nivel central: minar frente + arriba + abajo
-    mine3x3Slice()
+-- ============================================================
+-- CARVE FULL SLICE
+-- Mina un slice completo del tunel y avanza la turtle un bloque.
+-- Si tunnelWidth=3: carva las 3 columnas (9 bloques por slice).
+-- Si tunnelWidth=1: solo la columna central (3 bloques por slice).
+--
+-- IMPORTANTE: turtle.digUp/digDown/inspectUp son facing-independent,
+-- siempre operan sobre el bloque directamente encima/debajo de la
+-- turtle. Por eso para cavar las esquinas laterales hay que mover
+-- fisicamente la turtle a la columna lateral.
+-- ============================================================
 
-    -- Avanzar
+local function carveCurrentColumnVertical()
+    -- Cava arriba y abajo de la posicion actual (inspecciona y cuenta ores)
+    inspectAndLog("up")
+    inspectAndLog("down")
+    digCounting(turtle.digUp, turtle.detectUp)
+    digCounting(turtle.digDown, turtle.detectDown)
+end
+
+local function carveSideColumn(turnFn)
+    -- Asume turtle en columna central, facing forward.
+    -- Gira, avanza al lateral, cava up+down, vuelve al centro, re-alinea.
+    local f0 = state.facing
+    turnFn()
+    inspectAndLog("forward")
+    digCounting(turtle.dig, turtle.detect)
     if not movement.safeForward() then
+        movement.faceDirection(f0)
         return false
     end
+    carveCurrentColumnVertical()
+    movement.turnAround()
+    if not movement.safeForward() then
+        -- algo raro: no podemos volver. re-alineamos de todos modos
+        movement.faceDirection(f0)
+        return false
+    end
+    movement.faceDirection(f0)
+    return true
+end
 
-    -- Despues de avanzar, la siguiente slice se mina en el proximo tunnelStep().
-    -- Para cubrir el 3x3 completo, chequear paredes laterales:
-    -- giramos, cavamos, volvemos. Esto extiende el tunel a 3 de ancho.
-    movement.turnLeft()
+local function carveFullSlice()
+    -- Cava techo+suelo de la columna central actual
     inspectAndLog("forward")
-    if turtle.detect() then
-        turtle.dig()
-        state.blocksMined = state.blocksMined + 1
-    end
-    inspectAndLog("up")
-    if turtle.detectUp() then
-        turtle.digUp()
-        state.blocksMined = state.blocksMined + 1
-    end
-    movement.turnRight() -- volver al frente
+    carveCurrentColumnVertical()
+    digCounting(turtle.dig, turtle.detect)
 
-    movement.turnRight()
-    inspectAndLog("forward")
-    if turtle.detect() then
-        turtle.dig()
-        state.blocksMined = state.blocksMined + 1
+    -- Pausa breve por grava/arena que caiga
+    sleep(0.15)
+    if turtle.detectUp() then turtle.digUp() end
+
+    -- Avanzar al nuevo slice
+    if not movement.safeForward() then return false end
+
+    -- Cavar techo+suelo del nuevo centro
+    carveCurrentColumnVertical()
+
+    -- Si el tunel es ancho, cavar laterales
+    local width = state.tunnelWidth or 3
+    if width >= 3 then
+        carveSideColumn(movement.turnLeft)
+        carveSideColumn(movement.turnRight)
     end
-    inspectAndLog("up")
-    if turtle.detectUp() then
-        turtle.digUp()
-        state.blocksMined = state.blocksMined + 1
-    end
-    movement.turnLeft() -- volver al frente
 
     return true
 end
 
 -- ============================================================
 -- GEO SCANNER HINT
--- Usa el geo scanner (si esta) para decidir si vale la pena seguir.
--- Si detecta un ore muy cerca, muestra un hint en el status.
 -- ============================================================
 
 local function geoHint()
     if not state.hasGeoScanner then return end
-    local ore, dist = peripherals.nearestOre(8)
+    local ore = peripherals.nearestOre(8)
     if ore then
-        ui.setStatus("Ore cerca: " .. (ore.name or "?"):gsub("minecraft:", ""))
+        local short = (ore.name or "?"):gsub("minecraft:", "")
+        ui.setStatus("Ore cerca: " .. short)
     end
 end
 
 -- ============================================================
--- BRANCH MINING
--- Patron: tunel principal largo, y cada `branchSpacing` bloques
--- salen dos ramas (izquierda y derecha) de `branchLength` bloques.
+-- BRANCH
+-- Una rama de `length` bloques y vuelta al origen.
+-- Trackea los pasos realmente avanzados para no pasarse al volver.
 -- ============================================================
 
--- Mina una rama de X bloques en la direccion actual y vuelve al origen.
 local function mineBranch(length)
+    local advanced = 0
     for i = 1, length do
         ui.drawDashboard()
         ui.setStatus("Rama "..i.."/"..length)
         geoHint()
 
-        if not tunnelStep() then
-            ui.setStatus("Bloqueado en rama")
+        if not carveFullSlice() then
+            ui.setStatus("Rama bloqueada")
             break
         end
+        advanced = advanced + 1
 
         if inventory.isAlmostFull() then
             inventory.handleFullInventory()
         end
     end
 
-    -- Volver al origen de la rama
+    -- Volver exactamente los pasos avanzados
     ui.setStatus("Volviendo del ramal")
     movement.turnAround()
-    for i = 1, length do
-        movement.safeForward()
+    for _ = 1, advanced do
+        if not movement.safeForward() then break end
     end
     movement.turnAround()
 end
 
+-- ============================================================
+-- BRANCH MINING (shaft principal + ramas)
+-- ============================================================
+
 local function runBranchMining()
     local facingStart = state.facing
+    local startStep = (state.currentStep or 0) + 1
 
-    for step = 1, state.shaftLength do
+    for step = startStep, state.shaftLength do
+        state.currentStep = step
+
         ui.drawDashboard()
         ui.setStatus("Shaft "..step.."/"..state.shaftLength)
         geoHint()
 
-        -- cada branchSpacing bloques, hacer ramas
+        -- cada branchSpacing bloques, hacer ramas (step>1 para no cavar en la entrada)
         if step > 1 and (step % state.branchSpacing == 0) then
-            -- rama izquierda
             movement.turnLeft()
             ui.setStatus("Rama izquierda")
             mineBranch(state.branchLength)
-            -- rama derecha
-            movement.turnAround() -- ahora miramos derecha relativo al shaft
+            movement.turnAround()
             ui.setStatus("Rama derecha")
             mineBranch(state.branchLength)
-            -- volver a mirar hacia adelante del shaft
             movement.turnLeft()
             movement.faceDirection(facingStart)
         end
 
-        -- avanzar por el shaft
-        if not tunnelStep() then
+        if not carveFullSlice() then
             ui.setStatus("Shaft bloqueado")
             break
         end
@@ -179,15 +181,17 @@ local function runBranchMining()
             inventory.handleFullInventory()
         end
 
-        -- chequeo de fuel proactivo para volver
+        -- fuel proactivo: necesitamos poder volver
         local fuel = turtle.getFuelLevel()
         if fuel ~= "unlimited" then
-            local needed = state.x + 10
+            local needed = math.abs(state.x) + 10
             if fuel < needed and not inventory.autoRefuel(needed) then
                 ui.setStatus("Fuel critico, volviendo")
                 break
             end
         end
+
+        persist.save()
     end
 end
 
@@ -196,12 +200,16 @@ end
 -- ============================================================
 
 local function runTunnelMining()
-    for step = 1, state.shaftLength do
+    local startStep = (state.currentStep or 0) + 1
+
+    for step = startStep, state.shaftLength do
+        state.currentStep = step
+
         ui.drawDashboard()
         ui.setStatus("Tunel "..step.."/"..state.shaftLength)
         geoHint()
 
-        if not tunnelStep() then
+        if not carveFullSlice() then
             ui.setStatus("Bloqueado")
             break
         end
@@ -209,6 +217,8 @@ local function runTunnelMining()
         if inventory.isAlmostFull() then
             inventory.handleFullInventory()
         end
+
+        persist.save()
     end
 end
 
@@ -218,12 +228,12 @@ end
 
 local function returnToStart()
     ui.setStatus("Volviendo al inicio")
-    -- girar hacia -X
+    -- girar hacia -X para volver
     movement.faceDirection(2)
     while state.x > 0 do
         if not movement.safeForward() then break end
     end
-    -- alinear X si quedo descentrado
+    -- alinear Z si quedo descentrado
     while state.z ~= 0 do
         if state.z > 0 then
             movement.faceDirection(3)
@@ -232,10 +242,9 @@ local function returnToStart()
         end
         if not movement.safeForward() then break end
     end
-    -- dejar mirando el tunel
+    -- dejar mirando hacia el tunel
     movement.faceDirection(0)
 
-    -- dejar cofre final con todo lo recolectado
     if inventory.slotsUsed() > 0 then
         ui.setStatus("Cofre final")
         inventory.placeChest()
@@ -248,9 +257,14 @@ end
 
 function run()
     ui.drawDashboard()
-    ui.setStatus("Empezando mineria")
 
-    -- Aviso temprano si estamos en bioma peligroso
+    if state.resuming then
+        ui.setStatus("Reanudando sesion...")
+        sleep(1)
+    else
+        ui.setStatus("Empezando mineria")
+    end
+
     if state.hasEnvDetector and peripherals.isDangerousBiome() then
         ui.setStatus("AVISO: bioma peligroso")
         sleep(1.5)
@@ -263,4 +277,7 @@ function run()
     end
 
     returnToStart()
+
+    -- limpiar checkpoint al terminar limpiamente
+    persist.clear()
 end

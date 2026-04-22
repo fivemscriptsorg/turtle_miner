@@ -13,6 +13,7 @@ local BASE_URL = "https://raw.githubusercontent.com/fivemscriptsorg/turtle_miner
 local FILES = {
     "startup.lua",
     "miner/ui.lua",
+    "miner/persist.lua",
     "miner/config.lua",
     "miner/peripherals.lua",
     "miner/inventory.lua",
