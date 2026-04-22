@@ -164,6 +164,7 @@ function drawDashboard()
     local per = ""
     if state.hasEnvDetector then per = per .. "[EnvD] " end
     if state.hasGeoScanner then per = per .. "[Geo] " end
+    if state.hasRemote    then per = per .. "[Rem] " end
     if per == "" then per = "(sin peripherals)" end
     term.write("Per  : " .. per)
 

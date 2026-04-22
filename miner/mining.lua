@@ -23,6 +23,9 @@ local function inspectAndLog(direction)
     if ok and data and inventory.isOre(data.name) then
         state.oresFound = state.oresFound + 1
         ui.logOre(data.name, state.y)
+        if state.hasRemote then
+            pcall(remote.notifyEvent, "ore", { name = data.name, y = state.y })
+        end
         return true
     end
     return false
@@ -135,6 +138,32 @@ local function geoHint()
 end
 
 -- ============================================================
+-- REMOTE COMMAND CHECK
+-- Se llama en puntos seguros (entre slices / antes de ramas).
+-- Devuelve true si hay que abortar el loop actual (home/stop).
+-- Bloquea en pause hasta que cambie a resume/home/stop.
+-- ============================================================
+
+local function checkRemoteCmd()
+    if not state.hasRemote then return false end
+    local cmd = state.remoteCmd
+    if cmd == "pause" then
+        ui.setStatus("PAUSADO (remoto)")
+        while state.remoteCmd == "pause" do
+            sleep(0.3)
+        end
+        ui.setStatus("Reanudando")
+        if state.remoteCmd == "resume" then
+            state.remoteCmd = nil
+        end
+    end
+    if state.remoteCmd == "home" or state.remoteCmd == "stop" then
+        return true
+    end
+    return false
+end
+
+-- ============================================================
 -- BRANCH
 -- ============================================================
 
@@ -144,6 +173,8 @@ local function mineBranch(length)
 
     local advanced = 0
     for i = 1, length do
+        if checkRemoteCmd() then break end
+
         ui.drawDashboard()
         ui.setStatus("Rama "..i.."/"..length)
         geoHint()
@@ -182,6 +213,7 @@ local function runBranchMining()
     local startStep = (state.currentStep or 0) + 1
 
     for step = startStep, state.shaftLength do
+        if checkRemoteCmd() then break end
         state.currentStep = step
 
         ui.drawDashboard()
@@ -243,6 +275,7 @@ local function runTunnelMining()
     local startStep = (state.currentStep or 0) + 1
 
     for step = startStep, state.shaftLength do
+        if checkRemoteCmd() then break end
         state.currentStep = step
 
         ui.drawDashboard()
@@ -315,7 +348,13 @@ function run()
         runTunnelMining()
     end
 
-    returnToStart()
+    -- Comando "stop" remoto: guarda checkpoint y termina sin volver
+    if state.remoteCmd == "stop" then
+        ui.setStatus("STOP remoto - checkpoint OK")
+        persist.save()
+        return
+    end
 
+    returnToStart()
     persist.clear()
 end

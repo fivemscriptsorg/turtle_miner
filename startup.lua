@@ -11,6 +11,7 @@ os.loadAPI("miner/config.lua")
 os.loadAPI("miner/inventory.lua")
 os.loadAPI("miner/movement.lua")
 os.loadAPI("miner/peripherals.lua")
+os.loadAPI("miner/remote.lua")
 os.loadAPI("miner/mining.lua")
 
 -- State global accesible por todos los modulos
@@ -47,6 +48,11 @@ local function defaultState()
         hasGeoScanner = false,
         envDetector = nil,
         geoScanner = nil,
+
+        -- remote control (se rellena en remote.init, no persiste)
+        hasRemote = false,
+        hostname = nil,
+        remoteCmd = nil,
     }
 end
 
@@ -97,12 +103,25 @@ local function main()
     end
 
     peripherals.detect()
+    remote.init()
 
     if not state.resuming then
         config.runMenu()
     end
 
-    mining.run()
+    -- Mineria + listener rednet en paralelo.
+    -- waitForAny termina en cuanto mining.run vuelve (listener es un loop
+    -- infinito y solo muere cuando el parallel lo mata).
+    if state.hasRemote then
+        parallel.waitForAny(
+            function() mining.run() end,
+            function() remote.listener() end
+        )
+        remote.shutdown()
+    else
+        mining.run()
+    end
+
     ui.finalReport()
 end
 

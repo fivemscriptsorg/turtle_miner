@@ -8,6 +8,7 @@ Diseñado para **turtles no-advanced** (pantalla 39x13, sin color). Todo el rend
 
 - **Branch mining** con ancho configurable (1x3 rápido o 3x3 completo): túnel principal con ramas laterales cada X bloques. El 3x3 cava todas las columnas correctamente (centro + laterales).
 - **Resume tras apagado**: el estado se guarda en `miner/state.dat` cada paso. Si el chunk se descarga o la turtle se apaga, al reiniciar ofrece reanudar desde el último paso completado.
+- **Control remoto por rednet**: si la turtle tiene un wireless modem, se puede controlar desde otra computer con `client`: dashboard en vivo con posición, fuel y progreso, más comandos pause/resume/home/stop.
 - **Auto-refuel inteligente**: cuando el fuel baja del umbral, busca carbón (`minecraft:coal`) o carbón vegetal (`minecraft:charcoal`) en el inventario y lo quema, dejando una reserva.
 - **Colocación de cofres sin bloquear paso**: cuando el inventario está casi lleno, gira a la derecha, cava un hueco en la pared lateral, coloca el cofre dentro (así no obstruye el túnel) y vacía todo menos fuel y cofres.
 - **Detección de minerales** con `turtle.inspect()` en las tres direcciones. Lleva log de lo encontrado.
@@ -67,6 +68,24 @@ O si tienes HTTP habilitado, usa `wget` / `pastebin get` para cada archivo.
 - **Y=-59** para diamantes (versiones 1.18+)
 - Turtle en el suelo, mirando en la dirección del túnel
 - Espacio libre a la derecha para que pueda colocar cofres
+
+## Control remoto
+
+Requiere un **wireless modem** en la turtle (upgrade slot) y otro en la computer desde la que controlas.
+
+1. En la turtle: coloca el modem en uno de los slots de upgrade. Al arrancar verás que detecta `[Rem]` en el dashboard.
+2. En la computer de control: copia `client.lua` (el installer lo baja) y coloca un wireless modem al lado.
+3. Ejecuta `client` — escanea la red, elige la turtle y aparece un dashboard en vivo.
+
+Comandos (teclado, en el cliente):
+- `P` — pausa la minería en el próximo slice seguro
+- `R` — resume
+- `H` — aborta y vuelve al inicio (deja cofre final si hay loot)
+- `S` — stop: guarda checkpoint y se queda quieta (puedes reanudar desde ahí en la siguiente sesión)
+- `Space` — pide refresh inmediato del status
+- `Q` — cierra el cliente
+
+La turtle hace broadcast del status cada 5s. Si hay varias turtles en rednet, `client` las lista con su hostname `miner-<id>`.
 
 ## Notas técnicas
 

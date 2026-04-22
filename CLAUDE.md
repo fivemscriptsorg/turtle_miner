@@ -98,6 +98,24 @@ Both `sliceLane` and `passFacing` are in `PERSIST_FIELDS` so resume lands back i
 
 `handleFullInventory` escalates: `compact()` → `dropJunk()` → `placeChest()`. `placeChest` digs a hole in the right-hand wall and places the chest there so it doesn't block the tunnel. The turtle MUST be in the center column facing forward when it's called, so only call it between `carveFullSlice()` iterations.
 
+## Remote control (rednet)
+
+Protocol name: `turtle_miner`. Hostname: `miner-<computerID>`. If the turtle has a modem peripheral (side or upgrade), `remote.init()` opens it and calls `rednet.host`. The client (`client.lua`, run on a separate computer with a modem) discovers turtles via `rednet.lookup(PROTOCOL)`.
+
+During mining, `startup.lua` runs two coroutines via `parallel.waitForAny`:
+- `mining.run()` — the normal mining pipeline
+- `remote.listener()` — infinite loop of `rednet.receive(PROTOCOL, 2)` with a status broadcast every `BROADCAST_INTERVAL` seconds
+
+When `mining.run()` returns, `parallel.waitForAny` kills the listener. The listener is a pure consumer/producer — it never calls mining logic. It communicates by setting `state.remoteCmd`.
+
+`mining.checkRemoteCmd()` is called at the top of every slice loop (`runBranchMining`, `runTunnelMining`, `mineBranch`). It:
+- blocks on `pause` (polling with `sleep(0.3)`) until the cmd changes
+- returns `true` for `home` or `stop` (caller breaks the loop)
+
+`mining.run()` handles `stop` specially: it saves the checkpoint and skips `returnToStart` so the turtle freezes in place — resumable on next boot.
+
+Messages are always plain Lua tables. Client → turtle: `{ action = "pause" | "resume" | "home" | "stop" | "status" | "ping" }`. Turtle → client: `{ kind = "status", data = <snapshot> }`, `{ kind = "ack", action = "..." }`, `{ kind = "event", type = "...", data = {...} }`. Snapshots never include userdata (peripherals) — see `remote.snapshot()` for the whitelist.
+
 ## Advanced Peripherals
 
 All calls into `envDetector`/`geoScanner` are wrapped in `pcall`. They silently degrade to "no data" on cooldown, insufficient FE, disconnected peripheral, or API version skew. Don't remove the `pcall` wrapping even though it looks redundant — different AP versions have renamed methods.
