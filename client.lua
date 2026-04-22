@@ -14,11 +14,32 @@ local PROTOCOL = "turtle_miner"
 -- INIT: abrir modem
 -- ============================================================
 
-local function openModem()
+local function findModem()
     for _, side in ipairs({ "left", "right", "top", "bottom", "front", "back" }) do
         if peripheral.getType(side) == "modem" then
-            rednet.open(side)
             return side
+        end
+    end
+    return nil
+end
+
+local function openModem()
+    local side = findModem()
+    if side then
+        rednet.open(side)
+        return side
+    end
+    -- Pocket computer: intentar equipar un modem del inventario
+    if pocket and pocket.equipBack then
+        local ok, err = pocket.equipBack()
+        if ok then
+            side = findModem()
+            if side then
+                rednet.open(side)
+                return side
+            end
+        else
+            print("pocket.equipBack fallo: " .. tostring(err))
         end
     end
     return nil
@@ -26,7 +47,12 @@ end
 
 local side = openModem()
 if not side then
-    print("ERROR: no hay modem. Conecta un wireless modem.")
+    if pocket then
+        print("ERROR: sin modem. Pon un wireless modem en el slot")
+        print("seleccionado del inventario y vuelve a ejecutar.")
+    else
+        print("ERROR: no hay modem. Conecta un wireless modem.")
+    end
     return
 end
 
