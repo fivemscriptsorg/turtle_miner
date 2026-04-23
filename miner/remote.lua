@@ -74,6 +74,7 @@ function snapshot()
     end
     return {
         hostname      = state.hostname,
+        mode          = state.mode or "mining",
         x             = state.x,
         y             = state.y,
         z             = state.z,
@@ -82,6 +83,7 @@ function snapshot()
         origin        = state.origin,
         hasGPS        = state.hasGPS == true,
         fuel          = fuel,
+        -- mining
         pattern       = state.pattern,
         currentStep   = state.currentStep or 0,
         shaftLength   = state.shaftLength,
@@ -91,10 +93,23 @@ function snapshot()
         blocksMined   = state.blocksMined,
         oresFound     = state.oresFound,
         chestsPlaced  = state.chestsPlaced,
-        slotsUsed     = used,
         sliceLane     = state.sliceLane or 0,
-        remoteCmd     = state.remoteCmd,
         oreMapSize    = mapSize,
+        -- lumber
+        lumberMode    = state.lumberMode,
+        lumberCount   = state.lumberCount,
+        lumberSpacing = state.lumberSpacing,
+        useBonemeal   = state.useBonemeal,
+        logsHarvested = state.logsHarvested or 0,
+        -- farmer
+        farmWidth      = state.farmWidth,
+        farmLength     = state.farmLength,
+        farmCycle      = state.farmCycle or 0,
+        farmRow        = state.farmRow or 0,
+        cropsHarvested = state.cropsHarvested or 0,
+        -- comunes
+        slotsUsed     = used,
+        remoteCmd     = state.remoteCmd,
         startEpoch    = state.startEpoch,
     }
 end

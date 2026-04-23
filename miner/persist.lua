@@ -11,6 +11,7 @@ local PATH = "/miner/state.dat"
 -- Campos que SI se guardan. Los peripherals (userdata) no se serializan.
 local PERSIST_FIELDS = {
     "x", "y", "z", "facing",
+    "mode",
     "pattern",
     "shaftLength", "branchLength", "branchSpacing",
     "tunnelWidth", "tunnelHeight",
@@ -19,6 +20,12 @@ local PERSIST_FIELDS = {
     "sliceLane", "passFacing",
     "oresLog",
     "startEpoch",
+    -- lumber
+    "lumberMode", "lumberCount", "lumberSpacing",
+    "useBonemeal", "lumberSleepSecs", "logsHarvested",
+    -- farmer
+    "farmWidth", "farmLength", "farmSleepSecs",
+    "farmRow", "farmCol", "farmCycle", "cropsHarvested",
 }
 
 function save()

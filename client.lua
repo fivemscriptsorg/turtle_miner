@@ -1,17 +1,22 @@
 -- ============================================================
--- TURTLE MINER CLIENT
--- Control remoto y fleet dashboard.
+-- TURTLE MULTIPROGRAM CLIENT
+-- Control remoto para turtles mining / lumber / farmer.
+--
+-- Navegacion:
+--   Menu principal -> [1] Selector single, [2] Fleet, [Q] salir
+--   Single view    -> [B] back  [Q] quit
+--   Fleet view     -> [1-9] drill, [B] back, [Q] quit
 --
 -- Uso:
---   client            -- selector: modo single o fleet
---   client <id>       -- conecta directo a una turtle (modo single)
---   client fleet      -- dashboard de TODAS las turtles detectadas
+--   client            -- menu principal
+--   client <id>       -- conecta directo a turtle (single)
+--   client fleet      -- directo a fleet dashboard
 -- ============================================================
 
 local PROTOCOL = "turtle_miner"
 
 -- ============================================================
--- INIT: abrir modem
+-- MODEM INIT
 -- ============================================================
 
 local function findModem()
@@ -29,7 +34,6 @@ local function openModem()
         rednet.open(side)
         return side
     end
-    -- Pocket computer: intentar equipar un modem del inventario
     if pocket and pocket.equipBack then
         local ok, err = pocket.equipBack()
         if ok then
@@ -48,16 +52,83 @@ end
 local side = openModem()
 if not side then
     if pocket then
-        print("ERROR: sin modem. Pon un wireless modem en el slot")
-        print("seleccionado del inventario y vuelve a ejecutar.")
+        print("ERROR: sin modem. Pon un wireless modem")
+        print("en el slot seleccionado del pocket.")
     else
-        print("ERROR: no hay modem. Conecta un wireless modem.")
+        print("ERROR: no hay modem. Conecta uno.")
     end
     return
 end
 
 -- ============================================================
--- DISCOVERY
+-- UTILS
+-- ============================================================
+
+local FACING = { [0] = "+X", [1] = "+Z", [2] = "-X", [3] = "-Z" }
+
+local MODE_BADGE = {
+    mining = "M",
+    lumber = "L",
+    farmer = "F",
+}
+
+local MODE_FULL = {
+    mining = "MINING",
+    lumber = "LUMBER",
+    farmer = "FARMER",
+}
+
+local function modeOf(s)
+    return (s and s.mode) or "mining"
+end
+
+local function bar(pct, len)
+    len = len or 15
+    local f = math.floor(math.max(0, math.min(1, pct)) * len)
+    return "[" .. string.rep("#", f) .. string.rep("-", len - f) .. "]"
+end
+
+local function short(name)
+    if not name then return "?" end
+    return (name:gsub("minecraft:", ""))
+end
+
+local function statusStr(s, age)
+    if age > 15 then return "DEAD" end
+    if s.remoteCmd == "pause" then return "PAU" end
+    if s.remoteCmd == "home" then return "HOM" end
+    if s.remoteCmd == "stop" then return "STP" end
+    return "RUN"
+end
+
+local function fuelStr(f)
+    if f == -1 or f == "unlimited" then return "INF" end
+    return tostring(f or 0)
+end
+
+-- Progreso resumido por modo (texto corto)
+local function progressOf(s)
+    local m = modeOf(s)
+    if m == "lumber" then
+        return "logs:" .. (s.logsHarvested or 0)
+    elseif m == "farmer" then
+        return "cyc:" .. (s.farmCycle or 0)
+    end
+    if s.shaftLength and s.shaftLength > 0 then
+        return (s.currentStep or 0) .. "/" .. s.shaftLength
+    end
+    return "-"
+end
+
+local function locationOf(s)
+    if s.abs then
+        return string.format("(%d,%d,%d)", s.abs.x, s.abs.y, s.abs.z)
+    end
+    return string.format("L(%d,%d,%d)", s.x or 0, s.y or 0, s.z or 0)
+end
+
+-- ============================================================
+-- SCAN
 -- ============================================================
 
 local function scan(timeout)
@@ -80,79 +151,117 @@ local function scan(timeout)
 end
 
 -- ============================================================
--- SINGLE MODE (dashboard de UNA turtle)
+-- SINGLE VIEW (mode-aware)
+-- Devuelve "back" o "quit"
 -- ============================================================
 
-local FACING = { [0]="+X", [1]="+Z", [2]="-X", [3]="-Z" }
-local messageLog = {}
+local function renderSingle(targetId, lastStatus, lastUpdate, messageLog)
+    term.clear()
+    term.setCursorPos(1, 1)
+    local w, h = term.getSize()
 
-local function addLog(t)
-    table.insert(messageLog, t)
-    while #messageLog > 4 do table.remove(messageLog, 1) end
-end
+    local m = modeOf(lastStatus)
+    local badge = MODE_FULL[m] or "?"
+    local name = (lastStatus and lastStatus.hostname) or ("miner-" .. targetId)
 
-local function bar(pct, len)
-    len = len or 15
-    local f = math.floor(math.max(0, math.min(1, pct)) * len)
-    return "[" .. string.rep("#", f) .. string.rep("-", len - f) .. "]"
-end
+    print(string.rep("=", w))
+    print(" " .. name .. " [" .. badge .. "]   (#" .. targetId .. ")")
+    print(string.rep("=", w))
 
-local function singleMode(targetId)
-    local lastStatus
-    local lastUpdate = 0
+    if not lastStatus then
+        print("")
+        print(" (esperando status...)")
+    else
+        local s = lastStatus
 
-    local function render()
-        term.clear()
-        term.setCursorPos(1, 1)
-        local w, h = term.getSize()
-        print(string.rep("=", w))
-        local name = (lastStatus and lastStatus.hostname) or ("miner-"..targetId)
-        print(" " .. name .. "  (#" .. targetId .. ")")
-        print(string.rep("=", w))
-
-        if not lastStatus then
-            print("")
-            print(" (esperando status...)")
+        print(string.format(" Local  : X=%d Y=%d Z=%d %s",
+            s.x or 0, s.y or 0, s.z or 0, FACING[s.facing or 0] or "?"))
+        if s.abs then
+            print(string.format(" World  : X=%d Y=%d Z=%d [GPS]",
+                s.abs.x, s.abs.y, s.abs.z))
         else
-            local s = lastStatus
-            local fuelStr = s.fuel == -1 and "INF" or tostring(s.fuel)
-            local progPct = (s.shaftLength and s.shaftLength > 0) and (s.currentStep / s.shaftLength) or 0
+            print(" World  : (sin GPS)")
+        end
+        print(string.format(" Fuel   : %s", fuelStr(s.fuel)))
 
-            print(string.format(" Local  : X=%d Y=%d Z=%d %s",
-                s.x or 0, s.y or 0, s.z or 0, FACING[s.facing or 0] or "?"))
-            if s.abs then
-                print(string.format(" World  : X=%d Y=%d Z=%d [GPS]",
-                    s.abs.x, s.abs.y, s.abs.z))
-            else
-                print(" World  : (sin GPS)")
-            end
-            print(string.format(" Fuel   : %s", fuelStr))
+        -- Cuerpo mode-specific
+        if m == "lumber" then
+            print(string.format(" Config : %s  arboles=%d  spacing=%d  bm=%s",
+                tostring(s.lumberMode or "?"),
+                s.lumberCount or 0,
+                s.lumberSpacing or 0,
+                s.useBonemeal and "si" or "no"))
+            print(string.format(" Stats  : logs=%d  slot=%d",
+                s.logsHarvested or 0, s.slotsUsed or 0))
+        elseif m == "farmer" then
+            print(string.format(" Config : plot %dx%d",
+                s.farmWidth or 0, s.farmLength or 0))
+            print(string.format(" Stats  : crops=%d  slot=%d",
+                s.cropsHarvested or 0, s.slotsUsed or 0))
+            print(string.format(" Cycle  : %d  (fila %d)",
+                s.farmCycle or 0, s.farmRow or 0))
+        else
+            local progPct = (s.shaftLength and s.shaftLength > 0)
+                and (s.currentStep / s.shaftLength) or 0
             print(string.format(" Prog   : %d/%d %s",
                 s.currentStep or 0, s.shaftLength or 0, bar(progPct)))
             print(string.format(" Config : %s %dx3  ramas %d/cada %d",
-                tostring(s.pattern), s.tunnelWidth or 0,
-                s.branchLength or 0, s.branchSpacing or 0))
+                tostring(s.pattern or "?"),
+                s.tunnelWidth or 0,
+                s.branchLength or 0,
+                s.branchSpacing or 0))
             print(string.format(" Stats  : min=%d ore=%d cof=%d slot=%d",
-                s.blocksMined or 0, s.oresFound or 0, s.chestsPlaced or 0, s.slotsUsed or 0))
-            print(string.format(" OreMap : %d entradas compartidas", s.oreMapSize or 0))
-            local age = os.clock() - lastUpdate
-            local cmd = s.remoteCmd and ("  CMD="..s.remoteCmd) or ""
-            print(string.format(" Upd    : hace %ds%s", math.floor(age), cmd))
+                s.blocksMined or 0, s.oresFound or 0,
+                s.chestsPlaced or 0, s.slotsUsed or 0))
+            print(string.format(" OreMap : %d entradas compartidas",
+                s.oreMapSize or 0))
         end
 
-        local logY = h - 6
-        term.setCursorPos(1, logY)
-        print(string.rep("-", w))
-        print(" Eventos:")
-        for i, line in ipairs(messageLog) do
-            term.setCursorPos(1, logY + 1 + i)
-            term.write(" - " .. line:sub(1, w - 3))
-        end
+        local age = os.clock() - (lastUpdate or 0)
+        local cmd = s.remoteCmd and ("  CMD=" .. s.remoteCmd) or ""
+        print(string.format(" Upd    : hace %ds%s", math.floor(age), cmd))
+    end
 
-        term.setCursorPos(1, h - 1)
-        print(string.rep("-", w))
-        term.setCursorPos(1, h)
-        term.write(" [P]ause [R]esume [H]ome [S]top [Space]refresh [Q]uit")
+    local logY = h - 6
+    term.setCursorPos(1, logY)
+    print(string.rep("-", w))
+    print(" Eventos:")
+    for i, line in ipairs(messageLog) do
+        term.setCursorPos(1, logY + 1 + i)
+        term.write(" - " .. line:sub(1, w - 3))
+    end
+
+    term.setCursorPos(1, h - 1)
+    print(string.rep("-", w))
+    term.setCursorPos(1, h)
+    term.write(" [P]ause [R]esume [H]ome [S]top [Space] [B]ack [Q]uit")
+end
+
+local function eventLine(msg, senderId)
+    local t = msg.type or "?"
+    if t == "ore" and msg.data and msg.data.name then
+        return "! ore " .. short(msg.data.name)
+    elseif t == "log" and msg.data then
+        return "! log " .. short(msg.data.name or "") .. " total=" .. (msg.data.count or 0)
+    elseif t == "crop" and msg.data then
+        return "! crop " .. short(msg.data.name or "") .. " total=" .. (msg.data.count or 0)
+    end
+    return "! " .. t
+end
+
+local function singleView(targetId)
+    local lastStatus = nil
+    local lastUpdate = 0
+    local messageLog = {}
+    local result = nil
+
+    local function addLog(t)
+        table.insert(messageLog, t)
+        while #messageLog > 4 do table.remove(messageLog, 1) end
+    end
+
+    local function render()
+        renderSingle(targetId, lastStatus, lastUpdate, messageLog)
     end
 
     local function sendCmd(action)
@@ -169,15 +278,14 @@ local function singleMode(targetId)
                     lastUpdate = os.clock()
                     render()
                 elseif msg.kind == "ack" then
-                    addLog("<- ack "..tostring(msg.action)); render()
+                    addLog("<- ack " .. tostring(msg.action))
+                    render()
                 elseif msg.kind == "event" then
-                    local txt = "! " .. tostring(msg.type)
-                    if msg.data and msg.data.name then txt = txt .. " " .. msg.data.name end
-                    addLog(txt); render()
+                    addLog(eventLine(msg, senderId))
+                    render()
                 end
             elseif type(msg) == "table" and msg.kind == "ore_spotted" then
-                local n = msg.name or "ore"
-                addLog("#"..senderId.." "..n:gsub("minecraft:",""))
+                addLog("#" .. senderId .. " " .. short(msg.name))
                 render()
             end
         end
@@ -186,7 +294,10 @@ local function singleMode(targetId)
     local function input()
         while true do
             local _, key = os.pullEvent("key")
-            if key == keys.q then return
+            if key == keys.q then
+                result = "quit"; return
+            elseif key == keys.b or key == keys.backspace then
+                result = "back"; return
             elseif key == keys.p then sendCmd("pause"); render()
             elseif key == keys.r then sendCmd("resume"); render()
             elseif key == keys.h then sendCmd("home"); render()
@@ -196,69 +307,156 @@ local function singleMode(targetId)
         end
     end
 
-    sendCmd("status"); render()
+    -- Kickoff
+    sendCmd("status")
+    render()
     parallel.waitForAny(listener, input)
+
+    return result or "back"
 end
 
 -- ============================================================
--- FLEET MODE (dashboard multi-turtle + ore map combinado)
+-- SELECTOR (lista interactiva con flechas)
+-- Devuelve targetId o nil(back)
 -- ============================================================
 
-local function fleetMode()
-    local fleet = {}     -- computerId -> lastStatus
-    local lastSeen = {}  -- computerId -> os.clock()
-    local fleetOres = {} -- clave "x_y_z" -> ore entry
+local function selectorView()
+    local ids, info
+
+    local function refresh()
+        term.clear(); term.setCursorPos(1, 1)
+        print("Escaneando turtles en la red...")
+        ids, info = scan(1.5)
+    end
+
+    refresh()
+
+    if #ids == 0 then
+        print("")
+        print("No se encontro ninguna turtle.")
+        print("[R] Refrescar  [B/Q] Volver")
+        while true do
+            local _, key = os.pullEvent("key")
+            if key == keys.r then refresh(); return selectorView() end
+            if key == keys.b or key == keys.q or key == keys.backspace then
+                return nil
+            end
+        end
+    end
+
+    local selected = 1
+
+    local function render()
+        term.clear(); term.setCursorPos(1, 1)
+        local w, h = term.getSize()
+        print(string.rep("=", w))
+        print(" TURTLES DISPONIBLES   ([Enter] entrar  [R] refresh  [B] back)")
+        print(string.rep("=", w))
+
+        for i, id in ipairs(ids) do
+            local s = info[id] or {}
+            local badge = MODE_BADGE[modeOf(s)] or "?"
+            local name = (s.hostname or ("miner-" .. id)):sub(1, 16)
+            local fuel = fuelStr(s.fuel)
+            local st = statusStr(s, 0)
+            local cursor = (i == selected) and ">" or " "
+            local line = string.format("%s %d. %-16s [%s] %-3s  fuel=%s  %s",
+                cursor, i, name, badge, st, fuel, progressOf(s))
+            print(line:sub(1, w))
+        end
+
+        term.setCursorPos(1, h)
+        term.write(" Flechas mover | Enter seleccionar | Q salir")
+    end
+
+    render()
+
+    while true do
+        local _, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = selected - 1
+            if selected < 1 then selected = #ids end
+            render()
+        elseif key == keys.down then
+            selected = selected + 1
+            if selected > #ids then selected = 1 end
+            render()
+        elseif key == keys.enter then
+            return ids[selected]
+        elseif key == keys.r then
+            refresh()
+            selected = 1
+            if #ids == 0 then return selectorView() end
+            render()
+        elseif key == keys.b or key == keys.backspace then
+            return nil
+        elseif key == keys.q then
+            return "QUIT"
+        end
+    end
+end
+
+-- ============================================================
+-- FLEET VIEW (mixed mining/lumber/farmer)
+-- Navegacion: 1..9 = drill, B = back, Q = quit
+-- ============================================================
+
+local function fleetView()
+    local fleet = {}       -- computerId -> snapshot
+    local lastSeen = {}    -- computerId -> clock
+    local fleetOres = {}   -- "x_y_z" -> ore entry
     local log = {}
+    local result = nil
 
     local function addFleetLog(t)
         table.insert(log, 1, t)
         while #log > 5 do table.remove(log) end
     end
 
-    local function fleetRender()
+    local function sortedIds()
+        local ids = {}
+        for id in pairs(fleet) do table.insert(ids, id) end
+        table.sort(ids)
+        return ids
+    end
+
+    local function render()
         term.clear()
         term.setCursorPos(1, 1)
         local w, h = term.getSize()
         print(string.rep("=", w))
-        print(" FLEET DASHBOARD                     [F]leet launch [Q]uit")
+        print(" FLEET DASHBOARD          [1-9]drill [R]efresh [B]ack [Q]uit")
         print(string.rep("=", w))
 
-        local ids = {}
-        for id in pairs(fleet) do table.insert(ids, id) end
-        table.sort(ids)
-
+        local ids = sortedIds()
         if #ids == 0 then
             print("")
             print(" (esperando turtles... asegurate que tienen modem)")
         else
-            print(string.format(" %-12s %-18s %-8s %-4s %-7s %s",
-                "name","world/local","fuel","st","prog","ore"))
-            for _, id in ipairs(ids) do
+            print(string.format(" %-2s %-12s %-4s %-16s %-5s %-4s %-9s %s",
+                "#", "name", "mode", "pos", "fuel", "st", "prog", "n"))
+            for i, id in ipairs(ids) do
                 local s = fleet[id]
                 local age = os.clock() - (lastSeen[id] or 0)
-                local dead = age > 15
-                local name = (s.hostname or ("#"..id)):sub(1, 12)
-                local loc
-                if s.abs then
-                    loc = string.format("(%d,%d,%d)", s.abs.x, s.abs.y, s.abs.z)
-                else
-                    loc = string.format("L(%d,%d,%d)", s.x or 0, s.y or 0, s.z or 0)
+                local badge = MODE_BADGE[modeOf(s)] or "?"
+                local name = (s.hostname or ("#" .. id)):sub(1, 12)
+                local pos = locationOf(s):sub(1, 16)
+                local fuel = fuelStr(s.fuel):sub(1, 5)
+                local st = statusStr(s, age):sub(1, 4)
+                local prog = progressOf(s):sub(1, 9)
+
+                -- "n" columna: ores para mining, logs para lumber, crops para farmer
+                local n = 0
+                local m = modeOf(s)
+                if m == "lumber" then n = s.logsHarvested or 0
+                elseif m == "farmer" then n = s.cropsHarvested or 0
+                else n = s.oresFound or 0
                 end
-                local fuel = s.fuel == -1 and "INF" or tostring(s.fuel or 0)
-                local st
-                if dead then st = "DEAD"
-                elseif s.remoteCmd == "pause" then st = "PAU"
-                elseif s.remoteCmd == "home" then st = "HOM"
-                elseif s.remoteCmd == "stop" then st = "STP"
-                else st = "RUN" end
-                local prog
-                if s.shaftLength and s.shaftLength > 0 then
-                    prog = (s.currentStep or 0) .. "/" .. s.shaftLength
-                else
-                    prog = "-"
-                end
-                print(string.format(" %-12s %-18s %-8s %-4s %-7s %d",
-                    name, loc:sub(1,18), fuel:sub(1,8), st, prog:sub(1,7), s.oresFound or 0))
+
+                local line = string.format(" %-2d %-12s %-4s %-16s %-5s %-4s %-9s %d",
+                    i, name, badge, pos, fuel, st, prog, n)
+                print(line:sub(1, w))
+                if i >= 9 then break end
             end
         end
 
@@ -282,152 +480,179 @@ local function fleetMode()
                 if msg.kind == "status" and msg.data then
                     fleet[senderId] = msg.data
                     lastSeen[senderId] = os.clock()
-                    fleetRender()
+                    render()
                 elseif msg.kind == "ore_spotted" and msg.pos then
                     local k = msg.pos.x .. "_" .. msg.pos.y .. "_" .. msg.pos.z
-                    fleetOres[k] = { x=msg.pos.x, y=msg.pos.y, z=msg.pos.z,
-                                     name = msg.name, by = msg.by or senderId,
-                                     seenAt = os.clock() }
-                    local short = (msg.name or "ore"):gsub("minecraft:", "")
+                    fleetOres[k] = {
+                        x = msg.pos.x, y = msg.pos.y, z = msg.pos.z,
+                        name = msg.name, by = msg.by or senderId,
+                        seenAt = os.clock(),
+                    }
                     addFleetLog(string.format("! #%d %s @ (%d,%d,%d)",
-                        msg.by or senderId, short, msg.pos.x, msg.pos.y, msg.pos.z))
-                    fleetRender()
+                        msg.by or senderId, short(msg.name),
+                        msg.pos.x, msg.pos.y, msg.pos.z))
+                    render()
                 elseif msg.kind == "ore_gone" and msg.pos then
                     local k = msg.pos.x .. "_" .. msg.pos.y .. "_" .. msg.pos.z
                     fleetOres[k] = nil
                 elseif msg.kind == "event" then
-                    local txt = "# "..senderId.." "..tostring(msg.type)
-                    addFleetLog(txt)
-                    fleetRender()
+                    addFleetLog("# " .. senderId .. " " .. eventLine(msg, senderId))
+                    render()
                 end
             end
         end
     end
 
-    local function launchFleet()
-        -- lanza un "start" con offsets de Z a todas las turtles en idle
-        term.clear(); term.setCursorPos(1,1)
-        print("Fleet launch: lanzar N turtles en paralelo con offset Z")
-        print("Cada turtle debe estar ya en su posicion inicial.")
-        print("Este comando solo envia CONFIG. Cada turtle arranca sola.")
-        print("")
-        write("Longitud del shaft: ")
-        local L = tonumber(read()) or 30
-        write("Separacion Z entre turtles (bloques): ")
-        local dz = tonumber(read()) or 5
-        local ids = {}
-        for id in pairs(fleet) do table.insert(ids, id) end
-        table.sort(ids)
-        print("Turtles a lanzar: " .. #ids)
-        for i, id in ipairs(ids) do
-            local payload = {
-                action = "configure",
-                pattern = "branch",
-                shaftLength = L,
-                branchLength = 8,
-                branchSpacing = 3,
-                tunnelWidth = 3,
-                zOffset = (i - 1) * dz, -- informativo, la turtle no lo aplica sola
-            }
-            rednet.send(id, payload, PROTOCOL)
-            addFleetLog("-> launch #" .. id .. " offset z=" .. ((i - 1) * dz))
-        end
-        print("")
-        print("OJO: este build aun no aplica configure automaticamente.")
-        print("Cada turtle debe tener menu resuelto manualmente. Roadmap.")
-        print("")
-        print("Pulsa cualquier tecla para volver...")
-        os.pullEvent("key")
-    end
-
     local function input()
         while true do
             local _, key = os.pullEvent("key")
-            if key == keys.q then return
-            elseif key == keys.f then
-                launchFleet()
-                fleetRender()
+            if key == keys.q then result = "quit"; return end
+            if key == keys.b or key == keys.backspace then result = "back"; return end
+            if key == keys.r then
+                rednet.broadcast({ action = "status" }, PROTOCOL)
+                addFleetLog("-> broadcast status")
+                render()
+            else
+                -- Numeros 1-9 para drill into
+                local numKey = {
+                    [keys.one] = 1, [keys.two] = 2, [keys.three] = 3,
+                    [keys.four] = 4, [keys.five] = 5, [keys.six] = 6,
+                    [keys.seven] = 7, [keys.eight] = 8, [keys.nine] = 9,
+                }
+                local idx = numKey[key]
+                if idx then
+                    local ids = sortedIds()
+                    local target = ids[idx]
+                    if target then
+                        result = { drill = target }
+                        return
+                    end
+                end
             end
         end
     end
 
-    -- arranque: pedir status a cualquier turtle en la red
-    rednet.broadcast({ action = "status" }, PROTOCOL)
-    fleetRender()
-
     local function ticker()
         while true do
             sleep(2)
-            fleetRender()
+            render()
         end
     end
 
+    -- Kickoff: pide status a cualquier turtle en la red
+    rednet.broadcast({ action = "status" }, PROTOCOL)
+    render()
+
     parallel.waitForAny(listener, input, ticker)
+
+    return result or "back"
+end
+
+-- ============================================================
+-- MAIN MENU
+-- ============================================================
+
+local function mainMenu()
+    term.clear(); term.setCursorPos(1, 1)
+    local options = {
+        { k = "1", label = "Lista de turtles (selector)", value = "single" },
+        { k = "2", label = "Fleet dashboard (ver todas)", value = "fleet" },
+        { k = "Q", label = "Salir",                        value = "quit" },
+    }
+    local selected = 1
+    local function render()
+        term.clear(); term.setCursorPos(1, 1)
+        local w, _ = term.getSize()
+        print(string.rep("=", w))
+        print(" TURTLE CLIENT")
+        print(string.rep("=", w))
+        print("")
+        for i, o in ipairs(options) do
+            local cursor = (i == selected) and ">" or " "
+            print(" " .. cursor .. " [" .. o.k .. "] " .. o.label)
+        end
+        print("")
+        print(" Flechas mover | Enter seleccionar")
+    end
+    render()
+    while true do
+        local _, key = os.pullEvent("key")
+        if key == keys.up then
+            selected = selected - 1
+            if selected < 1 then selected = #options end
+            render()
+        elseif key == keys.down then
+            selected = selected + 1
+            if selected > #options then selected = 1 end
+            render()
+        elseif key == keys.enter then
+            return options[selected].value
+        elseif key == keys.one then return "single"
+        elseif key == keys.two then return "fleet"
+        elseif key == keys.q then return "quit"
+        end
+    end
 end
 
 -- ============================================================
 -- ROUTER
 -- ============================================================
 
-local function mainMenu()
-    term.clear(); term.setCursorPos(1, 1)
-    print("TURTLE MINER CLIENT")
-    print("===================")
-    print("")
-    print(" [1] Single turtle (control detallado)")
-    print(" [2] Fleet dashboard (ver todas)")
-    print(" [Q] Salir")
-    print("")
+local function runSingleLoop()
     while true do
-        local _, key = os.pullEvent("key")
-        if key == keys.one then return "single" end
-        if key == keys.two then return "fleet" end
-        if key == keys.q then return nil end
+        local id = selectorView()
+        if id == "QUIT" then return "quit" end
+        if not id then return "back" end
+        local r = singleView(id)
+        if r == "quit" then return "quit" end
+        -- r == "back" -> loop to selector
     end
 end
 
-local targetId
-local mode = nil
-
-if arg and arg[1] then
-    if arg[1] == "fleet" then
-        mode = "fleet"
-    else
-        targetId = tonumber(arg[1])
-        mode = "single"
+local function runFleetLoop()
+    while true do
+        local r = fleetView()
+        if r == "quit" then return "quit" end
+        if r == "back" then return "back" end
+        if type(r) == "table" and r.drill then
+            local sr = singleView(r.drill)
+            if sr == "quit" then return "quit" end
+            -- sr == "back" -> loop back into fleet
+        end
     end
 end
 
-if not mode then
-    mode = mainMenu()
-    if not mode then
-        term.clear(); term.setCursorPos(1,1)
-        print("Bye!")
-        return
-    end
-end
-
-if mode == "single" then
-    if not targetId then
-        local ids, info = scan()
-        if #ids == 0 then
-            print("No se encontro ninguna turtle.")
+local function main()
+    -- Args (shortcut): client <id> | client fleet
+    if arg and arg[1] then
+        if arg[1] == "fleet" then
+            runFleetLoop()
             return
         end
-        term.clear(); term.setCursorPos(1,1)
-        print("Turtles detectadas:")
-        for i, id in ipairs(ids) do
-            local name = (info[id] and info[id].hostname) or ("miner-" .. id)
-            print("  " .. i .. ". " .. name .. " (#" .. id .. ")")
+        local id = tonumber(arg[1])
+        if id then
+            singleView(id)
+            return
         end
-        write("Elige (Enter=1): ")
-        targetId = ids[tonumber(read()) or 1]
     end
-    if targetId then singleMode(targetId) end
-elseif mode == "fleet" then
-    fleetMode()
+
+    while true do
+        local choice = mainMenu()
+        if choice == "quit" or not choice then return end
+        if choice == "single" then
+            local r = runSingleLoop()
+            if r == "quit" then return end
+        elseif choice == "fleet" then
+            local r = runFleetLoop()
+            if r == "quit" then return end
+        end
+    end
 end
 
+local ok, err = pcall(main)
 term.clear(); term.setCursorPos(1, 1)
+if not ok then
+    print("ERROR: " .. tostring(err))
+end
 print("Desconectado.")
 rednet.close(side)

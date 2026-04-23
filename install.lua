@@ -25,6 +25,8 @@ local FILES = {
     "miner/remote.lua",
     "miner/swarm.lua",
     "miner/mining.lua",
+    "miner/lumber.lua",
+    "miner/farmer.lua",
 }
 
 local args = { ... }

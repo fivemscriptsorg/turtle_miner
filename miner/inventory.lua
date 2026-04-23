@@ -32,6 +32,26 @@ local KEEP_ITEMS = {
     ["minecraft:chest"] = true,
 }
 
+-- Saplings (lumber)
+local SAPLINGS = {
+    ["minecraft:oak_sapling"] = true,
+    ["minecraft:spruce_sapling"] = true,
+    ["minecraft:birch_sapling"] = true,
+    ["minecraft:jungle_sapling"] = true,
+    ["minecraft:acacia_sapling"] = true,
+    ["minecraft:dark_oak_sapling"] = true,
+    ["minecraft:cherry_sapling"] = true,
+    ["minecraft:mangrove_propagule"] = true,
+}
+
+-- Semillas y tuberculos que tambien replantan (farmer)
+local SEEDS = {
+    ["minecraft:wheat_seeds"] = true,
+    ["minecraft:beetroot_seeds"] = true,
+    ["minecraft:carrot"] = true,
+    ["minecraft:potato"] = true,
+}
+
 function isJunk(name)
     return JUNK_ITEMS[name] == true
 end
@@ -52,6 +72,34 @@ function isOre(name)
         or name == "minecraft:raw_iron"
         or name == "minecraft:raw_copper"
         or name == "minecraft:raw_gold"
+end
+
+function isSapling(name)
+    return SAPLINGS[name] == true
+end
+
+function isSeed(name)
+    return SEEDS[name] == true
+end
+
+function isBonemeal(name)
+    return name == "minecraft:bone_meal"
+end
+
+function isLog(name)
+    if not name then return false end
+    return name:find("_log$") ~= nil
+        or name:find("_wood$") ~= nil
+        or name == "minecraft:mangrove_roots"
+end
+
+-- Items que se conservan al volcar en un cofre.
+-- Combustible, cofres, saplings, semillas y bonemeal.
+function isKeepWhenDumping(name)
+    if not name then return false end
+    if KEEP_ITEMS[name] then return true end
+    if isSapling(name) or isSeed(name) or isBonemeal(name) then return true end
+    return false
 end
 
 -- Numero de slots ocupados
@@ -223,4 +271,42 @@ function handleFullInventory()
     if not isAlmostFull() then return true end
 
     return placeChest()
+end
+
+-- ============================================================
+-- DUMP INTO CHEST
+-- Para lumber/farmer: vuelca todo menos items a conservar
+-- (fuel, cofres, saplings, semillas, bonemeal) en el cofre que
+-- haya en la direccion indicada. direction: "forward"|"up"|"down".
+-- ============================================================
+
+function dumpInto(direction)
+    local dropFn = turtle.drop
+    if direction == "up" then dropFn = turtle.dropUp
+    elseif direction == "down" then dropFn = turtle.dropDown
+    end
+    local currentSlot = turtle.getSelectedSlot()
+    local dumped = 0
+    for i = 1, 16 do
+        local detail = turtle.getItemDetail(i)
+        if detail and not isKeepWhenDumping(detail.name) then
+            turtle.select(i)
+            if dropFn() then dumped = dumped + 1 end
+        end
+    end
+    turtle.select(currentSlot)
+    return dumped
+end
+
+-- Busca y selecciona el primer slot cuyo item pase el filtro.
+-- Devuelve el indice del slot o nil.
+function selectSlotWith(filterFn)
+    for i = 1, 16 do
+        local d = turtle.getItemDetail(i)
+        if d and filterFn(d.name) then
+            turtle.select(i)
+            return i
+        end
+    end
+    return nil
 end

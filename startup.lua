@@ -1,7 +1,11 @@
 -- ============================================================
--- TURTLE MINER v1.1
--- Branch mining 3x3 con auto-fuel, cofres inteligentes,
--- Environment Detector, Geo Scanner opcional, y resume tras crash.
+-- TURTLE MULTIPROGRAM v1.2
+-- Tres programas sobre la misma base:
+--   - mining  : branch / tunnel mining con auto-fuel, cofres y
+--               resume tras crash.
+--   - lumber  : tala de arboles (grid o single con bonemeal).
+--   - farmer  : cultivo automatizado de trigo/zanahoria/patata/
+--               remolacha sobre un plot NxM.
 -- Target: non-advanced mining turtle (term 39x13, no color).
 -- ============================================================
 
@@ -14,6 +18,8 @@ os.loadAPI("miner/peripherals.lua")
 os.loadAPI("miner/remote.lua")
 os.loadAPI("miner/swarm.lua")
 os.loadAPI("miner/mining.lua")
+os.loadAPI("miner/lumber.lua")
+os.loadAPI("miner/farmer.lua")
 
 -- State global accesible por todos los modulos
 local function defaultState()
@@ -22,59 +28,94 @@ local function defaultState()
         x = 0, y = 0, z = 0,
         facing = 0, -- 0=+X, 1=+Z, 2=-X, 3=-Z
 
-        -- stats
+        -- stats comunes
         blocksMined = 0,
         oresFound = 0,
         chestsPlaced = 0,
         startEpoch = os.epoch("utc"),
 
-        -- config (se llena desde el menu o desde state.dat)
+        -- que programa correr
+        mode = "mining",    -- "mining" | "lumber" | "farmer"
+
+        -- config mining
         pattern = "branch",
         shaftLength = 30,
         branchLength = 8,
         branchSpacing = 3,
         tunnelWidth = 3,
-
-        -- progreso (para resume)
         currentStep = 0,
-
-        -- registros
         oresLog = {},
+
+        -- config lumber
+        lumberMode = "grid",        -- "grid" | "single"
+        lumberCount = 4,
+        lumberSpacing = 2,
+        useBonemeal = false,
+        lumberSleepSecs = 120,
+        logsHarvested = 0,
+
+        -- config farmer
+        farmWidth = 5,
+        farmLength = 5,
+        farmSleepSecs = 600,
+        farmRow = 0,
+        farmCol = 0,
+        farmCycle = 0,
+        cropsHarvested = 0,
 
         -- flags runtime
         resuming = false,
 
-        -- peripherals (se rellenan en peripherals.detect, no persisten)
+        -- peripherals (no persisten)
         hasEnvDetector = false,
         hasGeoScanner = false,
         envDetector = nil,
         geoScanner = nil,
 
-        -- remote control (se rellena en remote.init, no persiste)
+        -- remote control (no persiste)
         hasRemote = false,
         hostname = nil,
         remoteCmd = nil,
 
-        -- swarm (GPS + ore map compartido, no persiste)
+        -- swarm (no persiste)
         hasGPS = false,
-        origin = nil,           -- coords ABS de nuestro (0,0,0) local
-        oreMap = {},            -- tabla compartida, clave "x_y_z"
+        origin = nil,
+        oreMap = {},
     }
 end
 
 _G.state = defaultState()
+
+local function modeLabel(m)
+    if m == "lumber" then return "LUMBER" end
+    if m == "farmer" then return "FARMER" end
+    return "MINING"
+end
 
 local function askResume(saved)
     ui.clear()
     ui.hline(1, "=")
     ui.center(2, "SESION ANTERIOR DETECTADA")
     ui.hline(3, "=")
+
+    local mode = saved.mode or "mining"
     term.setCursorPos(2, 5)
-    term.write("Patron : " .. tostring(saved.pattern))
+    term.write("Programa: " .. modeLabel(mode))
+
     term.setCursorPos(2, 6)
-    term.write("Paso   : " .. tostring(saved.currentStep) .. "/" .. tostring(saved.shaftLength))
+    if mode == "lumber" then
+        term.write("Config  : "..tostring(saved.lumberMode).." x"..tostring(saved.lumberCount))
+    elseif mode == "farmer" then
+        term.write("Plot    : "..tostring(saved.farmWidth).."x"..tostring(saved.farmLength)
+            .."  ciclo "..tostring(saved.farmCycle or 0))
+    else
+        term.write("Patron  : "..tostring(saved.pattern)
+            .."  "..tostring(saved.currentStep).."/"..tostring(saved.shaftLength))
+    end
+
     term.setCursorPos(2, 7)
-    term.write("Pos    : X="..tostring(saved.x).." Y="..tostring(saved.y).." Z="..tostring(saved.z))
+    term.write("Pos     : X="..tostring(saved.x).." Y="..tostring(saved.y).." Z="..tostring(saved.z))
+
     term.setCursorPos(2, 9)
     term.write("IMPORTANTE: la turtle debe estar EN esa")
     term.setCursorPos(2, 10)
@@ -87,6 +128,16 @@ local function askResume(saved)
         if key == keys.r then return "resume" end
         if key == keys.n then return "new" end
         if key == keys.d then return "delete" end
+    end
+end
+
+local function dispatchProgram()
+    if state.mode == "lumber" then
+        lumber.run()
+    elseif state.mode == "farmer" then
+        farmer.run()
+    else
+        mining.run()
     end
 end
 
@@ -111,28 +162,24 @@ local function main()
     peripherals.detect()
     remote.init()
 
-    -- GPS: necesita modem abierto (remote.init lo abrio). Si hay fix,
-    -- state.origin se rellena. Si no, swarm opera en local-only.
     if state.hasRemote then
         swarm.initGPS()
-        swarm.requestSync() -- pedir oreMap a otras turtles
+        swarm.requestSync()
     end
 
     if not state.resuming then
         config.runMenu()
     end
 
-    -- Mineria + listener rednet en paralelo.
-    -- waitForAny termina en cuanto mining.run vuelve (listener es un loop
-    -- infinito y solo muere cuando el parallel lo mata).
+    -- Programa + listener rednet en paralelo.
     if state.hasRemote then
         parallel.waitForAny(
-            function() mining.run() end,
+            function() dispatchProgram() end,
             function() remote.listener() end
         )
         remote.shutdown()
     else
-        mining.run()
+        dispatchProgram()
     end
 
     ui.finalReport()
