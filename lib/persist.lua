@@ -6,7 +6,7 @@
 -- tolerancia a tipos como tablas anidadas.
 -- ============================================================
 
-local PATH = "/miner/state.dat"
+local PATH = "/state.dat"
 
 -- Campos que SI se guardan. Los peripherals (userdata) no se serializan.
 local PERSIST_FIELDS = {

@@ -13,7 +13,7 @@ Al arrancar, la turtle muestra un menú para elegir programa. La selección y el
 ## Qué hace (mining)
 
 - **Branch mining** con ancho configurable (1x3 rápido o 3x3 completo): túnel principal con ramas laterales cada X bloques. El 3x3 cava todas las columnas correctamente (centro + laterales).
-- **Resume tras apagado**: el estado se guarda en `miner/state.dat` cada paso. Si el chunk se descarga o la turtle se apaga, al reiniciar ofrece reanudar desde el último paso completado.
+- **Resume tras apagado**: el estado se guarda en `/state.dat` cada paso. Si el chunk se descarga o la turtle se apaga, al reiniciar ofrece reanudar desde el último paso completado.
 - **Control remoto por rednet**: si la turtle tiene un wireless modem, se puede controlar desde otra computer con `client`: dashboard en vivo con posición, fuel y progreso, más comandos pause/resume/home/stop.
 - **Auto-refuel inteligente**: cuando el fuel baja del umbral, busca carbón (`minecraft:coal`) o carbón vegetal (`minecraft:charcoal`) en el inventario y lo quema, dejando una reserva.
 - **Colocación de cofres sin bloquear paso**: cuando el inventario está casi lleno, gira a la derecha, cava un hueco en la pared lateral, coloca el cofre dentro (así no obstruye el túnel) y vacía todo menos fuel y cofres.
@@ -48,7 +48,9 @@ Automatiza un plot N×M de cultivos sobre farmland pre-preparado.
 ```
 turtle-miner/
 ├── startup.lua              ← entry point: elige programa y dispatcha
-├── miner/
+├── client.lua               ← control remoto (otro computer o pocket)
+├── install.lua              ← descarga auto-actualizable desde main
+├── lib/                     ← modulos compartidos entre programas
 │   ├── ui.lua               ← splash, menús, dashboard
 │   ├── config.lua           ← menús (mining / lumber / farmer)
 │   ├── persist.lua          ← save/load de state para resume
@@ -56,22 +58,26 @@ turtle-miner/
 │   ├── inventory.lua        ← refuel, filtrado, cofres, dumpInto
 │   ├── movement.lua         ← movimiento seguro + tracking XYZ
 │   ├── remote.lua           ← rednet listener + broadcast de status
-│   ├── swarm.lua            ← GPS + ore map compartido
-│   ├── mining.lua           ← branch/tunnel mining, return-to-start
-│   ├── lumber.lua           ← tala grid/single + replant
+│   └── swarm.lua            ← GPS + ore map compartido
+├── mining/
+│   └── mining.lua           ← branch/tunnel mining, return-to-start
+├── lumber/
+│   └── lumber.lua           ← tala grid/single + replant
+├── farmer/
 │   └── farmer.lua           ← serpentina NxM + harvest+replant
 └── README.md
 ```
 
 ## Instalación
 
-Copia toda la carpeta `turtle-miner/` al disco de la turtle. La forma más rápida si tienes un disk drive:
+La forma recomendada es usar `install.lua`, que se auto-actualiza desde `main` de GitHub y crea las carpetas `lib/`, `mining/`, `lumber/` y `farmer/`:
 
-1. Mete un disquete en el disk drive junto a la turtle
-2. Copia los archivos al disquete
-3. En la turtle: `cp disk/startup.lua startup.lua` y `cp -r disk/miner miner`
+```
+pastebin get <ID> install
+install
+```
 
-O si tienes HTTP habilitado, usa `wget` / `pastebin get` para cada archivo.
+Cada vez que ejecutes `install` la turtle comprueba si `install.lua` ha cambiado en remoto, se auto-actualiza primero y luego descarga el resto. Un commit a `main` es efectivamente un deploy.
 
 ## Requisitos
 

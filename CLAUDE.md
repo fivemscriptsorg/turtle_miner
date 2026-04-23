@@ -20,15 +20,27 @@ install                # downloads install.lua first; if changed, re-execs with 
 ```
 The self-update mechanism means a commit to `main` is effectively a deploy. If you add a new module, add its path to `FILES` in `install.lua` and commit — next `install` run on the turtle will pick it up without extra steps.
 
+## Folder structure
+
+- `lib/` — shared modules (ui, persist, config, peripherals, inventory, movement, remote, swarm). Reused by every program.
+- `mining/mining.lua` — branch/tunnel mining pipeline.
+- `lumber/lumber.lua` — tree-farm pipeline (grid + single-with-bonemeal).
+- `farmer/farmer.lua` — NxM crop plot walker.
+- `startup.lua` — mode selector + dispatcher.
+- `client.lua` — mode-aware remote control (runs on a separate computer or pocket).
+
+Older builds had everything under `miner/`. `install.lua` deletes that folder when it sees the new layout.
+
 ## Module loading (important)
 
 Modules are loaded with the **deprecated** `os.loadAPI` in `startup.lua`. Semantics:
-- `os.loadAPI("miner/config.lua")` runs the file with a custom environment and exposes every global it defines as a field on a table named `config` (basename of the file, no `.lua`).
+- `os.loadAPI("lib/config.lua")` runs the file with a custom environment and exposes every global it defines as a field on a table named `config` (basename of the file, no `.lua`).
+- The folder in the path is irrelevant to the API name — only the basename matters. `lib/ui.lua` and `mining/mining.lua` both become globals `ui` and `mining`.
 - Inside a module, `function foo()` (no `local`) becomes `config.foo` to the caller.
 - Cross-module calls look like globals: `ui.setStatus(...)`, `inventory.isOre(...)`, etc.
 - Order in `startup.lua` matters: `ui` before `config` before `mining`, etc.
 
-If you migrate to `require`, every module must `return M` and every reference must become `local ui = require("miner.ui")`. Do it as a single coordinated change — mixing the two styles breaks imports silently.
+If you migrate to `require`, every module must `return M` and every reference must become `local ui = require("lib.ui")`. Do it as a single coordinated change — mixing the two styles breaks imports silently.
 
 ## Shared state
 
@@ -39,7 +51,7 @@ Everything hangs off `_G.state`, built in `startup.lua:defaultState()`. It mixes
 - **Progress**: `currentStep` (for resume)
 - **Runtime-only (NOT persisted)**: `envDetector`, `geoScanner`, `hasEnvDetector`, `hasGeoScanner` (userdata — can't be serialized)
 
-`miner/persist.lua` has a whitelist (`PERSIST_FIELDS`) of what gets saved. Peripherals are always re-detected on boot.
+`lib/persist.lua` has a whitelist (`PERSIST_FIELDS`) of what gets saved. Peripherals are always re-detected on boot.
 
 ## Facing convention
 
@@ -55,7 +67,7 @@ Turtle is placed at `(0,0,0)` facing `+X`. `movement.turnLeft/turnRight/turnArou
 
 `turtle.digUp`, `turtle.digDown`, `turtle.detectUp`, `turtle.inspectUp` (and Down variants) always operate on the block directly above/below the turtle, **regardless of which way the turtle is facing**. Turning left and then calling `digUp` does **not** dig the block above-and-to-the-left — it digs the same ceiling block.
 
-This caused the original 3×3 carving bug: the author expected turning + `digUp` to hit the upper side corners. To carve any column other than the turtle's own, the turtle must physically move into that column. See `carveSideColumn` in `miner/mining.lua` for the pattern.
+This caused the original 3×3 carving bug: the author expected turning + `digUp` to hit the upper side corners. To carve any column other than the turtle's own, the turtle must physically move into that column. See `carveSideColumn` in `mining/mining.lua` for the pattern.
 
 ## Mining pipeline
 
@@ -63,7 +75,7 @@ This caused the original 3×3 carving bug: the author expected turning + `digUp`
 
 - `runBranchMining` / `runTunnelMining` drive a `for step = startStep, shaftLength` loop. `startStep` honors `state.currentStep` so resume can skip completed steps.
 - Each iteration calls `carveFullSlice()` (see "Alternating lane pattern" below).
-- After every shaft step: `persist.save()` writes `/miner/state.dat`. On clean return, `persist.clear()` removes it.
+- After every shaft step: `persist.save()` writes `/state.dat`. On clean return, `persist.clear()` removes it.
 - `mineBranch(length)` tracks *actual* steps advanced (not the requested `length`) so a blocked branch doesn't overshoot the main shaft on the return trip. Before the backtrack it calls `returnToPassCenter()` so the straight-line return works.
 - `returnToStart` uses `faceDirection(2)` + forward loop to get back to X=0, then corrects Z drift, then places a final chest.
 
@@ -91,7 +103,7 @@ Both `sliceLane` and `passFacing` are in `PERSIST_FIELDS` so resume lands back i
 
 ## Inventory
 
-`miner/inventory.lua` classifies items via three sets:
+`lib/inventory.lua` classifies items via three sets:
 - `JUNK_ITEMS` — dropped to make space
 - `KEEP_ITEMS` — never dropped (coal, charcoal, coal_block, chest)
 - `isOre(name)` — pattern-matches `_ore$` plus `ancient_debris` and raw_ variants
@@ -118,7 +130,7 @@ Messages are always plain Lua tables. Client → turtle: `{ action = "pause" | "
 
 ## Swarm (multi-turtle cooperation)
 
-`miner/swarm.lua` adds a data layer for multiple turtles sharing a world. It does NOT add pathfinding or active job distribution — it's the primitives on which those would sit.
+`lib/swarm.lua` adds a data layer for multiple turtles sharing a world. It does NOT add pathfinding or active job distribution — it's the primitives on which those would sit.
 
 **GPS**: `swarm.initGPS()` calls `gps.locate()` after the modem is open. On success it stores `state.origin` = the ABS world coords of the turtle's local `(0,0,0)`. Then `swarm.toAbs(lx,ly,lz)` and `swarm.toLocal(ax,ay,az)` convert between frames. If GPS fails (no hosts / out of range), origin stays `nil` and cross-turtle coord sharing is disabled — each turtle still works fine in local-only mode.
 
@@ -148,7 +160,7 @@ All calls into `envDetector`/`geoScanner` are wrapped in `pcall`. They silently 
 
 ## Resume semantics
 
-On boot, `startup.lua` checks for `/miner/state.dat`. If found, shows a prompt with saved pattern / step / position and asks `[R] Reanudar [N] Nueva [D] Borrar`. Resume is **trust-based**: it assumes the turtle is physically at the saved position. If the user moved the turtle, the tracked coordinates will be wrong and the turtle will try to mine into the wrong blocks. Always advise "Nueva" if in doubt.
+On boot, `startup.lua` checks for `/state.dat`. If found, shows a prompt with saved mode / pattern / step / position and asks `[R] Reanudar [N] Nueva [D] Borrar`. Resume is **trust-based**: it assumes the turtle is physically at the saved position. If the user moved the turtle, the tracked coordinates will be wrong and the turtle will try to operate on the wrong blocks. Always advise "Nueva" if in doubt.
 
 ## Things that are NOT bugs
 

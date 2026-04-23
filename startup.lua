@@ -9,17 +9,17 @@
 -- Target: non-advanced mining turtle (term 39x13, no color).
 -- ============================================================
 
-os.loadAPI("miner/ui.lua")
-os.loadAPI("miner/persist.lua")
-os.loadAPI("miner/config.lua")
-os.loadAPI("miner/inventory.lua")
-os.loadAPI("miner/movement.lua")
-os.loadAPI("miner/peripherals.lua")
-os.loadAPI("miner/remote.lua")
-os.loadAPI("miner/swarm.lua")
-os.loadAPI("miner/mining.lua")
-os.loadAPI("miner/lumber.lua")
-os.loadAPI("miner/farmer.lua")
+os.loadAPI("lib/ui.lua")
+os.loadAPI("lib/persist.lua")
+os.loadAPI("lib/config.lua")
+os.loadAPI("lib/inventory.lua")
+os.loadAPI("lib/movement.lua")
+os.loadAPI("lib/peripherals.lua")
+os.loadAPI("lib/remote.lua")
+os.loadAPI("lib/swarm.lua")
+os.loadAPI("mining/mining.lua")
+os.loadAPI("lumber/lumber.lua")
+os.loadAPI("farmer/farmer.lua")
 
 -- State global accesible por todos los modulos
 local function defaultState()
