@@ -233,6 +233,11 @@ local function renderSingle(targetId, lastStatus, lastUpdate, messageLog)
         local age = os.clock() - (lastUpdate or 0)
         local cmd = s.remoteCmd and ("  CMD=" .. s.remoteCmd) or ""
         print(string.format(" Upd    : hace %ds%s", math.floor(age), cmd))
+
+        -- P2P health
+        local syncTxt = s.syncPhase and ("sync=" .. s.syncPhase) or "idle"
+        print(string.format(" Swarm  : peers=%d tomb=%d %s",
+            s.peers or 0, s.tombstones or 0, syncTxt))
     end
 
     local logY = h - 6

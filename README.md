@@ -213,16 +213,48 @@ Requiere un **wireless modem** en la turtle (upgrade slot) y otro en la computer
 
 La turtle hace broadcast del status cada 5s. Si hay varias turtles en rednet, `client` las lista con su hostname.
 
-## Swarm (varias turtles cooperando)
+## Swarm P2P (varias turtles cooperando)
 
-Si tienes GPS activo (3+ computers fijas corriendo `gps host <x> <y> <z>`), las turtles comparten automáticamente un **ore map** en rednet:
+Con GPS activo (3+ computers fijas corriendo `gps host <x> <y> <z>`), las turtles mantienen un **ore map compartido** sin servidor central. Toda la comunicación es peer-to-peer sobre rednet.
 
-- Cuando una turtle detecta un mineral, hace broadcast con su posición **absoluta**.
-- Todas las turtles que escuchen lo guardan en su `state.oreMap`.
-- Cuando una turtle llega y lo cava, hace broadcast de `ore_gone` y todas lo sacan.
-- Al arrancar, una turtle nueva pide `sync_request` y las existentes le mandan su mapa.
+### Deltas en tiempo real
 
-En el dashboard verás `[GPS]` y `OreM:<N>` indicando cuántos ores compartidos conoce.
+- `ore_spotted` / `ore_gone` se broadcastan cuando una turtle encuentra o cava un ore.
+- `scan_report` batch del scout publica varios ores en un solo mensaje.
+
+### Sync inteligente al unirse una turtle nueva
+
+1. **Digest**: la nueva broadcasta `sync_request` con su `{count, latest}`.
+2. **Offer**: las peers que tengan más o más reciente contestan con `sync_offer` + su propio digest.
+3. **Ack**: tras 3s la nueva elige el mejor y manda `sync_ack` solo a ese.
+4. **Chunked dump**: el elegido envía `sync_chunk` paginados (100 entradas/pg) con solo lo que falta (delta por `seenAt`). El último chunk lleva los tombstones.
+
+Solo un peer hace el dump, el resto se calla. Bandwidth O(1) en número de peers.
+
+### Tombstones (ores ya minados)
+
+Cuando una turtle cava un ore, además de borrar del mapa registra un **tombstone** con TTL de 10 min. Si llega después un `ore_spotted` o un chunk de sync con ese ore, se **rechaza** salvo que el `seenAt` sea posterior al tombstone (respawn raro). Esto evita que un peer con información stale re-introduzca ores ya consumidos.
+
+### Gossip anti-entropy (auto-healing)
+
+Cada 120s cada turtle elige aleatoriamente un peer conocido y le manda un `gossip_ping` con su digest. Si el otro detecta que tiene info más reciente, responde con un `sync_chunk` delta. Garantiza convergencia en 1-2 ciclos tras una reconexión o partición de red.
+
+### Versión por entrada
+
+Cada ore en el mapa lleva `seenAt` (epoch unix). Merge es always **last-writer-wins**. Los chunks de sync preservan el `seenAt` original, por lo que un peer viejo no pisa datos recientes.
+
+### Métricas visibles
+
+El `client` muestra en la vista single:
+- `peers=N` — cuántos peers activos (vistos en los últimos 60s)
+- `tomb=N` — tombstones activos
+- `sync=phase` — fase del handshake si hay uno en curso (`awaiting_offers` / `awaiting_chunks`) o `idle`
+
+En el dashboard de la propia turtle verás `[GPS]` y `OreM:<N>` indicando cuántos ores compartidos conoce.
+
+### Backwards compat
+
+El protocolo viejo `sync_dump` (full map en un mensaje) se sigue procesando para interoperar con turtles que aún no tengan el upgrade P2P.
 
 ### Fleet mode en el cliente
 

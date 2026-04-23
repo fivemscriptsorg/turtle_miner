@@ -111,6 +111,11 @@ function snapshot()
         scoutPatrol    = state.scoutPatrol,
         scansDone      = state.scansDone or 0,
         scanRadius     = state.scoutScanRadius,
+        -- swarm P2P health
+        tombstones    = (swarm and swarm.tombstoneCount) and swarm.tombstoneCount() or 0,
+        peers         = (swarm and swarm.peerCount) and swarm.peerCount() or 0,
+        lastSyncAt    = state.lastSyncAt,
+        syncPhase     = state.syncInFlight and state.syncInFlight.phase or nil,
         -- comunes
         slotsUsed     = used,
         remoteCmd     = state.remoteCmd,
@@ -186,6 +191,11 @@ function listener()
         if now - lastBroadcast >= BROADCAST_INTERVAL then
             pcall(rednet.broadcast, { kind = "status", data = snapshot() }, PROTOCOL)
             lastBroadcast = now
+        end
+
+        -- Tick del swarm (avanza sync state machine + gossip periodico)
+        if swarm and swarm.tick then
+            pcall(swarm.tick)
         end
     end
 end
