@@ -102,25 +102,26 @@ end
 
 local function processCell()
     local ok, block = turtle.inspectDown()
-    if not ok or not block or not block.name then
-        ui.setStatus("cell: aire/null")
-        return false
-    end
+    local name = (ok and block and block.name) or "minecraft:air"
 
-    -- Caso 1: farmland sin cultivo -> plantar algo si tenemos semilla
-    if block.name == "minecraft:farmland" then
+    -- Caso 1: aire o farmland debajo -> plantar si tenemos semilla.
+    -- IMPORTANTE: la turtle vuela a crop_Y+1. Si no hay cultivo,
+    -- inspectDown ve AIRE (el slot del cultivo vacio), no farmland
+    -- (que esta 2 abajo). placeDown con seed igual planta: MC busca
+    -- farmland un bloque mas abajo al usar la semilla.
+    if name == "minecraft:air" or name == "minecraft:farmland" then
         if plantAnySeed() then
-            ui.setStatus("plantado en farmland")
+            ui.setStatus("plantado")
             return true
         end
-        ui.setStatus("farmland sin semilla")
+        ui.setStatus(name == "minecraft:air" and "aire, sin semilla" or "farmland, sin semilla")
         return false
     end
 
-    -- Caso 2: bloque desconocido (ni cultivo ni farmland) -> skip
-    local crop = CROPS[block.name]
+    -- Caso 2: bloque desconocido (dirt/stone/...) -> setup raro
+    local crop = CROPS[name]
     if not crop then
-        ui.setStatus("cell: " .. block.name:gsub("minecraft:", ""))
+        ui.setStatus("cell: " .. name:gsub("minecraft:", ""))
         return false
     end
 
@@ -137,7 +138,7 @@ local function processCell()
         return false
     end
     state.cropsHarvested = (state.cropsHarvested or 0) + 1
-    notifyCrop(block.name)
+    notifyCrop(name)
 
     if selectSeed(crop.seed) then
         if turtle.placeDown() then
