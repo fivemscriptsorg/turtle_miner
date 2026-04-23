@@ -9,23 +9,27 @@
 local PATH = "/state.dat"
 
 -- Campos que SI se guardan. Los peripherals (userdata) no se serializan.
+-- /state.dat = runtime progress (para resume tras crash).
+-- La config de cada rol vive en /role.cfg (ver lib/roleconfig.lua)
+-- y se carga antes que esto; aqui solo guardamos lo que cambia
+-- durante la ejecucion y hace falta para reanudar en el mismo punto.
 local PERSIST_FIELDS = {
+    -- posicion / orientacion
     "x", "y", "z", "facing",
     "mode",
-    "pattern",
-    "shaftLength", "branchLength", "branchSpacing",
-    "tunnelWidth", "tunnelHeight",
+    -- stats comunes
     "blocksMined", "oresFound", "chestsPlaced",
+    "startEpoch",
+    -- mining runtime
     "currentStep",
     "sliceLane", "passFacing",
     "oresLog",
-    "startEpoch",
-    -- lumber
-    "lumberMode", "lumberCount", "lumberSpacing",
-    "useBonemeal", "lumberSleepSecs", "logsHarvested",
-    -- farmer
-    "farmWidth", "farmLength", "farmSleepSecs",
+    -- lumber runtime
+    "logsHarvested",
+    -- farmer runtime
     "farmRow", "farmCol", "farmCycle", "cropsHarvested",
+    -- scout runtime
+    "scansDone",
 }
 
 function save()

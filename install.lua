@@ -16,9 +16,11 @@ local BASE_URL = "https://raw.githubusercontent.com/fivemscriptsorg/turtle_miner
 local FILES = {
     "startup.lua",
     "client.lua",
+    "configure.lua",
     "lib/ui.lua",
     "lib/persist.lua",
     "lib/config.lua",
+    "lib/roleconfig.lua",
     "lib/peripherals.lua",
     "lib/inventory.lua",
     "lib/movement.lua",
@@ -27,9 +29,10 @@ local FILES = {
     "mining/mining.lua",
     "lumber/lumber.lua",
     "farmer/farmer.lua",
+    "scout/scout.lua",
 }
 
-local DIRS = { "lib", "mining", "lumber", "farmer" }
+local DIRS = { "lib", "mining", "lumber", "farmer", "scout" }
 
 local args = { ... }
 local skipSelfUpdate = (args[1] == "--post-update")

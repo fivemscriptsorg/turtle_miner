@@ -1,224 +1,243 @@
 -- ============================================================
 -- CONFIG MODULE
--- Menu inicial: selector de programa (mineria/lumber/farmer) y
--- sub-menus por programa.
+-- Wizard interactivo para elegir rol + configurar parametros.
+-- La config se guarda en /role.cfg via roleconfig.
+-- Cada invocacion puede:
+--   - wizardFromScratch(): primer boot, elige rol + configura
+--   - reconfigure(currentCfg): re-abre menu para cambiar rol o params
 -- ============================================================
 
 -- ============================================================
--- MINING MENU
+-- ROLE PICKER
 -- ============================================================
 
-local function runMiningMenu()
+function pickRole(deviceType)
+    deviceType = deviceType or roleconfig.detectDeviceType()
+    local roles = roleconfig.rolesFor(deviceType)
+
+    -- Si solo hay una opcion (pocket/computer -> client), auto.
+    if #roles == 1 then return roles[1] end
+
+    local labels = {
+        mining = "Mineria (branch / tunnel)",
+        lumber = "Tala de arboles (lumber)",
+        farmer = "Cultivos (farmer)",
+        scout  = "Scout (mapea con geoscanner)",
+        client = "Cliente de control remoto",
+    }
+
+    local options = {}
+    for _, r in ipairs(roles) do
+        table.insert(options, { label = labels[r] or r, value = r })
+    end
+
+    return ui.menu("ROL DEL DISPOSITIVO", options, 1)
+end
+
+-- ============================================================
+-- MINING CONFIG
+-- ============================================================
+
+local function configureMining(cfg)
     local pattern = ui.menu("PATRON DE MINERIA", {
         { label = "Branch Mining 3x3 (recomendado)", value = "branch" },
         { label = "Tunnel Recto 3x3",                value = "tunnel" },
-        { label = "Volver",                          value = "back" },
-    }, 1)
+    }, cfg.pattern == "tunnel" and 2 or 1)
+    cfg.pattern = pattern
 
-    if pattern == "back" then return false end
-
-    state.pattern = pattern
-
-    state.shaftLength = ui.promptNumber(
-        "LONGITUD DEL TUNEL PRINCIPAL",
-        30, 5, 200
-    )
+    cfg.shaftLength = ui.promptNumber("LONGITUD DEL TUNEL", cfg.shaftLength or 30, 5, 200)
 
     if pattern == "branch" then
-        state.branchLength = ui.promptNumber(
-            "LONGITUD DE CADA RAMA LATERAL",
-            8, 3, 30
-        )
-        state.branchSpacing = ui.promptNumber(
-            "SEPARACION ENTRE RAMAS (bloques)",
-            3, 2, 8
-        )
+        cfg.branchLength  = ui.promptNumber("LONGITUD DE RAMAS",   cfg.branchLength  or 8, 3, 30)
+        cfg.branchSpacing = ui.promptNumber("SEPARACION DE RAMAS", cfg.branchSpacing or 3, 2, 8)
     end
 
-    local width = ui.menu("ANCHO DEL TUNEL", {
+    cfg.tunnelWidth = ui.menu("ANCHO DEL TUNEL", {
         { label = "3 bloques (3x3 completo)", value = 3 },
         { label = "1 bloque (1x3 rapido)",    value = 1 },
-    }, 1)
-    state.tunnelWidth = width
+    }, cfg.tunnelWidth == 1 and 2 or 1)
+    return cfg
+end
 
+-- ============================================================
+-- LUMBER CONFIG
+-- ============================================================
+
+local function configureLumber(cfg)
+    cfg.mode = ui.menu("MODO TALA", {
+        { label = "Grid - linea de arboles", value = "grid" },
+        { label = "Single - un arbol",       value = "single" },
+    }, cfg.mode == "single" and 2 or 1)
+
+    if cfg.mode == "grid" then
+        cfg.count   = ui.promptNumber("ARBOLES EN LINEA", cfg.count or 4, 1, 20)
+        cfg.spacing = ui.promptNumber("ESPACIADO",        cfg.spacing or 2, 2, 6)
+    end
+
+    cfg.bonemeal = ui.menu("USAR BONEMEAL", {
+        { label = "Si", value = true },
+        { label = "No", value = false },
+    }, cfg.bonemeal and 1 or 2)
+
+    cfg.sleepSecs = ui.promptNumber("SEGUNDOS ENTRE CICLOS", cfg.sleepSecs or 120, 5, 3600)
+    return cfg
+end
+
+-- ============================================================
+-- FARMER CONFIG
+-- ============================================================
+
+local function configureFarmer(cfg)
+    cfg.width     = ui.promptNumber("ANCHO DEL PLOT (X)",    cfg.width or 5, 1, 20)
+    cfg.length    = ui.promptNumber("LARGO DEL PLOT (Z)",    cfg.length or 5, 1, 20)
+    cfg.sleepSecs = ui.promptNumber("SEGUNDOS ENTRE CICLOS", cfg.sleepSecs or 600, 30, 3600)
+    return cfg
+end
+
+-- ============================================================
+-- SCOUT CONFIG
+-- ============================================================
+
+local function configureScout(cfg)
+    local patrolIdx = ({ box = 1, stationary = 2, follow = 3 })[cfg.patrol or "box"] or 1
+    cfg.patrol = ui.menu("PATRON DE PATRULLA", {
+        { label = "Box  - rectangulo fijo",  value = "box" },
+        { label = "Stationary - un punto",   value = "stationary" },
+        { label = "Follow - sigue mineros",  value = "follow" },
+    }, patrolIdx)
+
+    if cfg.patrol == "box" then
+        cfg.boxX = ui.promptNumber("CORNER X (local)",  cfg.boxX or 0, -200, 200)
+        cfg.boxZ = ui.promptNumber("CORNER Z (local)",  cfg.boxZ or 0, -200, 200)
+        cfg.boxW = ui.promptNumber("ANCHO (X)",         cfg.boxW or 32, 4, 200)
+        cfg.boxL = ui.promptNumber("LARGO (Z)",         cfg.boxL or 32, 4, 200)
+        cfg.stepSpacing = ui.promptNumber("SPACING ENTRE SCANS", cfg.stepSpacing or 12, 4, 32)
+    end
+
+    cfg.scanAltY   = ui.promptNumber("ALTURA DE SCAN (Y)",   cfg.scanAltY or 0, -50, 100)
+    cfg.safeAltY   = ui.promptNumber("ALTURA SEGURA (Y)",    cfg.safeAltY or 20, 0, 200)
+    cfg.scanRadius = ui.promptNumber("RADIO GEOSCANNER",     cfg.scanRadius or 8, 4, 32)
+    cfg.sleepSecs  = ui.promptNumber("SEGUNDOS ENTRE CICLOS", cfg.sleepSecs or 30, 5, 3600)
+    return cfg
+end
+
+-- ============================================================
+-- DISPATCH POR ROL
+-- ============================================================
+
+local CONFIGURATORS = {
+    mining = configureMining,
+    lumber = configureLumber,
+    farmer = configureFarmer,
+    scout  = configureScout,
+    client = function(cfg) return cfg end,
+}
+
+function configureRole(role, cfg)
+    cfg = cfg or {}
+    local fn = CONFIGURATORS[role]
+    if fn then return fn(cfg) end
+    return cfg
+end
+
+-- ============================================================
+-- CONFIRMACION
+-- ============================================================
+
+local function confirmAndShow(cfg)
+    local _, h = term.getSize()
     ui.clear()
     ui.hline(1, "=")
-    ui.center(2, "RESUMEN DE CONFIGURACION")
+    ui.center(2, "CONFIGURACION")
     ui.hline(3, "=")
-    term.setCursorPos(2, 5)
-    term.write("Patron     : " .. pattern)
-    term.setCursorPos(2, 6)
-    term.write("Shaft      : " .. state.shaftLength .. " bloques")
-    term.setCursorPos(2, 7)
-    term.write("Ancho      : " .. state.tunnelWidth .. "x3")
-    if pattern == "branch" then
-        term.setCursorPos(2, 8)
-        term.write("Ramas      : " .. state.branchLength .. " cada " .. state.branchSpacing)
+
+    term.setCursorPos(2, 5); term.write("Rol    : " .. (cfg.role or "?"))
+    term.setCursorPos(2, 6); term.write("Device : " .. (cfg.deviceType or "?"))
+
+    local y = 8
+    if cfg.role == "mining" and cfg.mining then
+        local m = cfg.mining
+        term.setCursorPos(2, y);   term.write("Patron : " .. tostring(m.pattern))
+        term.setCursorPos(2, y+1); term.write("Shaft  : " .. tostring(m.shaftLength) .. " ancho " .. tostring(m.tunnelWidth))
+        if m.pattern == "branch" then
+            term.setCursorPos(2, y+2); term.write("Ramas  : " .. tostring(m.branchLength) .. " cada " .. tostring(m.branchSpacing))
+        end
+    elseif cfg.role == "lumber" and cfg.lumber then
+        local l = cfg.lumber
+        term.setCursorPos(2, y);   term.write("Modo   : " .. tostring(l.mode))
+        term.setCursorPos(2, y+1); term.write("N      : " .. tostring(l.count) .. " spacing " .. tostring(l.spacing))
+        term.setCursorPos(2, y+2); term.write("Bm " .. (l.bonemeal and "si" or "no") .. "  sleep " .. tostring(l.sleepSecs) .. "s")
+    elseif cfg.role == "farmer" and cfg.farmer then
+        local f = cfg.farmer
+        term.setCursorPos(2, y);   term.write("Plot   : " .. tostring(f.width) .. "x" .. tostring(f.length))
+        term.setCursorPos(2, y+1); term.write("Sleep  : " .. tostring(f.sleepSecs) .. "s")
+    elseif cfg.role == "scout" and cfg.scout then
+        local s = cfg.scout
+        term.setCursorPos(2, y); term.write("Patron : " .. tostring(s.patrol))
+        if s.patrol == "box" then
+            term.setCursorPos(2, y+1)
+            term.write("Box    : " .. tostring(s.boxW) .. "x" .. tostring(s.boxL) .. " step " .. tostring(s.stepSpacing))
+        end
+        term.setCursorPos(2, y+2); term.write("Y scan=" .. tostring(s.scanAltY) .. " safe=" .. tostring(s.safeAltY))
     end
 
-    local fuel = turtle.getFuelLevel()
-    term.setCursorPos(2, 9)
-    if fuel == "unlimited" then
-        term.write("Fuel       : INF (sin limite)")
-    else
-        term.write("Fuel       : " .. fuel)
-        local perSlice = (state.tunnelWidth == 1) and 1 or 3
-        local estimate = state.shaftLength * perSlice + 2
-        if pattern == "branch" then
-            local numBranches = math.floor(state.shaftLength / state.branchSpacing) * 2
-            estimate = estimate + numBranches * (state.branchLength * (perSlice + 1) + 1)
-        end
-        estimate = estimate + state.shaftLength
-        estimate = math.floor(estimate * 1.15)
-        term.setCursorPos(2, 10)
-        term.write("Estimado   : " .. estimate .. " (aprox)")
-        if fuel < estimate then
-            term.setCursorPos(2, 11)
-            term.write("AVISO: fuel bajo, se auto-repostara con coal.")
-        end
-    end
-
-    term.setCursorPos(2, 13)
-    term.write("Pulsa [Enter] para empezar, Q para salir.")
-
+    term.setCursorPos(2, h - 1)
+    term.write("[Enter] guardar  [Q] cancelar")
     while true do
         local _, key = os.pullEvent("key")
         if key == keys.enter then return true end
-        if key == keys.q then
-            ui.clear()
-            error("User exit", 0)
-        end
+        if key == keys.q then return false end
     end
 end
 
 -- ============================================================
--- LUMBER MENU
+-- PUBLIC ENTRY POINTS
 -- ============================================================
 
-local function runLumberMenu()
-    local mode = ui.menu("MODO TALA", {
-        { label = "Grid - linea de arboles",   value = "grid" },
-        { label = "Single - un arbol",         value = "single" },
-        { label = "Volver",                    value = "back" },
-    }, 1)
-
-    if mode == "back" then return false end
-    state.lumberMode = mode
-
-    if mode == "grid" then
-        state.lumberCount = ui.promptNumber(
-            "NUMERO DE ARBOLES EN LINEA", 4, 1, 20
-        )
-        state.lumberSpacing = ui.promptNumber(
-            "ESPACIADO ENTRE ARBOLES", 2, 2, 6
-        )
-    else
-        state.lumberCount = 1
-        state.lumberSpacing = 2
+-- Primer boot: elige rol + configura + confirma + guarda.
+function wizardFromScratch()
+    local deviceType = roleconfig.detectDeviceType()
+    local role = pickRole(deviceType)
+    local cfg = roleconfig.blankConfig(role, deviceType)
+    cfg.role = role
+    cfg[role] = configureRole(role, cfg[role] or {})
+    if not confirmAndShow(cfg) then
+        error("User cancel", 0)
     end
-
-    local bm = ui.menu("BONEMEAL PARA ACELERAR", {
-        { label = "Si (requiere bonemeal en inventario)", value = true },
-        { label = "No (esperar crecimiento natural)",     value = false },
-    }, mode == "single" and 1 or 2)
-    state.useBonemeal = bm
-
-    state.lumberSleepSecs = ui.promptNumber(
-        "SEGUNDOS ENTRE CICLOS",
-        mode == "single" and 30 or 120, 5, 3600
-    )
-
-    ui.clear()
-    ui.hline(1, "=")
-    ui.center(2, "CONFIG LUMBER")
-    ui.hline(3, "=")
-    term.setCursorPos(2, 5); term.write("Modo       : " .. mode)
-    term.setCursorPos(2, 6); term.write("Arboles    : " .. state.lumberCount)
-    term.setCursorPos(2, 7); term.write("Spacing    : " .. state.lumberSpacing)
-    term.setCursorPos(2, 8); term.write("Bonemeal   : " .. (bm and "si" or "no"))
-    term.setCursorPos(2, 9); term.write("Sleep      : " .. state.lumberSleepSecs .. "s")
-    term.setCursorPos(2, 11)
-    term.write("Recuerda: coal + saplings + (bonemeal)")
-    term.setCursorPos(2, 12)
-    term.write("Cofre detras de la turtle.")
-    term.setCursorPos(2, 13)
-    term.write("[Enter] empezar  [Q] salir")
-
-    while true do
-        local _, key = os.pullEvent("key")
-        if key == keys.enter then return true end
-        if key == keys.q then ui.clear(); error("User exit", 0) end
-    end
+    roleconfig.save(cfg)
+    return cfg
 end
 
--- ============================================================
--- FARMER MENU
--- ============================================================
-
-local function runFarmerMenu()
-    state.farmWidth = ui.promptNumber(
-        "ANCHO DEL PLOT (X)", 5, 1, 20
-    )
-    state.farmLength = ui.promptNumber(
-        "LARGO DEL PLOT (Z)", 5, 1, 20
-    )
-    state.farmSleepSecs = ui.promptNumber(
-        "SEGUNDOS ENTRE CICLOS", 600, 30, 3600
-    )
-
-    ui.clear()
-    ui.hline(1, "=")
-    ui.center(2, "CONFIG FARMER")
-    ui.hline(3, "=")
-    term.setCursorPos(2, 5); term.write("Plot       : " .. state.farmWidth .. "x" .. state.farmLength)
-    term.setCursorPos(2, 6); term.write("Sleep      : " .. state.farmSleepSecs .. "s")
-    term.setCursorPos(2, 8); term.write("Cultivos   : wheat, carrot,")
-    term.setCursorPos(2, 9); term.write("             potato, beetroot")
-    term.setCursorPos(2, 11)
-    term.write("Turtle 2 bloques encima del farmland.")
-    term.setCursorPos(2, 12)
-    term.write("Cofre detras de la turtle.")
-    term.setCursorPos(2, 13)
-    term.write("[Enter] empezar  [Q] salir")
+-- Reconfiguracion: permite cambiar rol o solo params de un rol.
+function reconfigure(currentCfg)
+    currentCfg = currentCfg or roleconfig.load() or roleconfig.blankConfig("mining")
 
     while true do
-        local _, key = os.pullEvent("key")
-        if key == keys.enter then return true end
-        if key == keys.q then ui.clear(); error("User exit", 0) end
-    end
-end
-
--- ============================================================
--- TOP-LEVEL: selecciona programa y despacha a su menu
--- ============================================================
-
-function runMenu()
-    while true do
-        local program = ui.menu("PROGRAMA", {
-            { label = "Mineria (branch / tunnel)", value = "mining" },
-            { label = "Tala de arboles (lumber)",  value = "lumber" },
-            { label = "Cultivos (farmer)",         value = "farmer" },
-            { label = "Salir",                     value = "exit"   },
-        }, 1)
-
-        if program == "exit" then
-            ui.clear()
-            print("Bye!")
-            error("User exit", 0)
+        local options = {
+            { label = "Cambiar rol (actual: " .. tostring(currentCfg.role) .. ")", value = "role" },
+        }
+        if currentCfg.role and CONFIGURATORS[currentCfg.role] then
+            table.insert(options, { label = "Configurar " .. currentCfg.role, value = "params" })
         end
+        table.insert(options, { label = "Guardar y salir", value = "save" })
+        table.insert(options, { label = "Cancelar",        value = "cancel" })
 
-        state.mode = program
-
-        local ok
-        if program == "mining" then
-            ok = runMiningMenu()
-        elseif program == "lumber" then
-            ok = runLumberMenu()
-        elseif program == "farmer" then
-            ok = runFarmerMenu()
+        local choice = ui.menu("CONFIGURACION", options, 1)
+        if choice == "cancel" then return nil end
+        if choice == "save" then
+            if confirmAndShow(currentCfg) then
+                roleconfig.save(currentCfg)
+                return currentCfg
+            end
+        elseif choice == "role" then
+            local newRole = pickRole(currentCfg.deviceType)
+            if newRole and newRole ~= currentCfg.role then
+                currentCfg.role = newRole
+                currentCfg[newRole] = currentCfg[newRole] or {}
+                currentCfg[newRole] = configureRole(newRole, currentCfg[newRole])
+            end
+        elseif choice == "params" then
+            currentCfg[currentCfg.role] = configureRole(currentCfg.role, currentCfg[currentCfg.role] or {})
         end
-
-        if ok then return end
-        -- si el sub-menu devolvio false (back), volver al selector
     end
 end

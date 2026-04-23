@@ -232,6 +232,21 @@ end
 -- Devuelve true si manejo el mensaje.
 -- ============================================================
 
+-- Registro de peers (miners/scouts/etc.) para follow mode del scout
+-- y para el dashboard local. Se actualiza con cada status broadcast.
+local function recordPeer(senderId, data)
+    if not data then return end
+    state.knownPeers = state.knownPeers or {}
+    state.knownPeers[senderId] = {
+        id       = senderId,
+        hostname = data.hostname,
+        mode     = data.mode,
+        abs      = data.abs,
+        fuel     = data.fuel,
+        lastSeen = os.epoch("utc") / 1000,
+    }
+end
+
 function handleSwarmMessage(senderId, msg)
     if type(msg) ~= "table" then return false end
     if msg.kind == "ore_spotted" and msg.pos then
@@ -243,8 +258,15 @@ function handleSwarmMessage(senderId, msg)
     elseif msg.kind == "ore_claim" and msg.pos then
         claimOre(msg.pos, msg.by or senderId, msg.ttl or 30)
         return true
+    elseif msg.kind == "scan_report" and type(msg.ores) == "table" then
+        -- Batch de un scout: cada entrada es una ore en ABS coords.
+        for _, ore in ipairs(msg.ores) do
+            if ore.x and ore.y and ore.z and ore.name then
+                recordOre(ore, ore.name, msg.by or senderId)
+            end
+        end
+        return true
     elseif msg.kind == "sync_request" then
-        -- alguien recien entro a la red: le mandamos nuestro mapa
         pcall(rednet.send, senderId,
             { kind = "sync_dump", oreMap = state.oreMap or {} },
             remote.PROTOCOL)
@@ -256,6 +278,12 @@ function handleSwarmMessage(senderId, msg)
             end
         end
         return true
+    elseif msg.kind == "status" and msg.data then
+        -- Aprovechamos los status broadcasts para poblar knownPeers.
+        -- Devolvemos false para que el flujo normal de remote.handleMessage
+        -- tambien los procese si hace falta.
+        recordPeer(senderId, msg.data)
+        return false
     end
     return false
 end

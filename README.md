@@ -1,14 +1,24 @@
-# Turtle Multiprogram v1.2
+# Turtle Multiprogram v1.3
 
-Tres programas para turtles de **CC:Tweaked** compartiendo la misma base (persistencia, movimiento seguro, control remoto por rednet y swarm opcional con GPS):
+Programas para turtles + dispositivos compañeros en **CC:Tweaked**, compartiendo la misma base (persistencia, movimiento seguro, control remoto por rednet y swarm opcional con GPS):
 
 - **Mining** — branch / tunnel mining con auto-fuel y cofres inteligentes.
 - **Lumber** — tala automatizada de árboles (grid o single con bonemeal).
 - **Farmer** — cultivo automático de trigo, zanahoria, patata y remolacha.
+- **Scout** — turtle con geoscanner que mapea el área y publica ores vía rednet. No mina.
+- **Client** — dashboard interactivo en cualquier computer o pocket con modem.
 
 Diseñado para **turtles no-advanced** (pantalla 39x13, sin color). Todo el renderizado usa solo caracteres ASCII.
 
-Al arrancar, la turtle muestra un menú para elegir programa. La selección y el progreso se persisten, así que tras un chunk-unload puedes reanudar exactamente donde estabas.
+## Rol persistente (desde v1.3)
+
+Cada dispositivo elige su rol **una vez** en el primer boot y queda guardado en `/role.cfg`. A partir de ahí arranca directamente sin preguntar. Para cambiarlo: ejecuta `configure` en el shell.
+
+- **Turtle**: wizard te pregunta rol (mining / lumber / farmer / scout) + parámetros del programa.
+- **Pocket computer**: rol `client` auto-asignado; `startup` ejecuta el cliente directamente.
+- **Computer normal**: rol `client` auto-asignado; arranca el dashboard al boot.
+
+`/state.dat` sigue guardando el **progreso en vivo** (para resume tras crash o chunk-unload) y es independiente de `/role.cfg`.
 
 ## Qué hace (mining)
 
@@ -33,6 +43,20 @@ Automatiza una línea de árboles y repone saplings tras talar.
 - **Sapling slot**: la turtle busca automáticamente cualquier sapling en su inventario. Spruce es el ideal porque crece en columna 1×1 siempre.
 - Funciona mejor con spruce; oak/birch a veces ramifican y el tronco se queda con leaves que la turtle ignora.
 
+## Qué hace (scout)
+
+El scout **no mina**: su trabajo es poblar el ore-map del swarm. Lleva **geoscanner + wireless modem** como upgrades (sin pico). Navega por el aire a una altura segura, baja a la altura de scan configurada, ejecuta `geoScanner.scan(radius)`, convierte los offsets relativos a coordenadas absolutas via GPS y broadcasta un `scan_report` batch con todos los ores encontrados.
+
+Los mining turtles escuchan ese `scan_report` y lo mergean en su `oreMap` local. Así un scout mapea un área y **varios miners** la reciben sin gastar un slot de upgrade en geoscanner cada uno.
+
+Tres patrones de patrulla seleccionables en el wizard:
+
+- **Box** — rectángulo fijo (corner + ancho + largo) a una Y de scan, recorrido en serpentina con spacing configurable entre scans. Predecible, cubre un área definida.
+- **Stationary** — se queda en un punto y scanea en loop. Útil si tienes un punto alto con vista a la zona.
+- **Follow** — escucha los `status` broadcasts de miners activos y se coloca sobre el más reciente para scanear alrededor suyo. Requiere pathfinding básico: funciona mejor si el cielo está despejado.
+
+El scout **no tiene pico**, así que no puede cavar. Si un bloque le bloquea el paso intenta subir unos bloques por encima antes de darse por vencido. Recomendable tenerlo operando por encima de la superficie del terreno.
+
 ## Qué hace (farmer)
 
 Automatiza un plot N×M de cultivos sobre farmland pre-preparado.
@@ -47,24 +71,24 @@ Automatiza un plot N×M de cultivos sobre farmland pre-preparado.
 
 ```
 turtle-miner/
-├── startup.lua              ← entry point: elige programa y dispatcha
-├── client.lua               ← control remoto (otro computer o pocket)
+├── startup.lua              ← entry point: dispatch segun /role.cfg
+├── configure.lua            ← reconfigurar rol o params (shell command)
+├── client.lua               ← dashboard remoto (computer / pocket)
 ├── install.lua              ← descarga auto-actualizable desde main
 ├── lib/                     ← modulos compartidos entre programas
 │   ├── ui.lua               ← splash, menús, dashboard
-│   ├── config.lua           ← menús (mining / lumber / farmer)
-│   ├── persist.lua          ← save/load de state para resume
-│   ├── peripherals.lua      ← detección de Env Detector + Geo Scanner
+│   ├── roleconfig.lua       ← lee/escribe /role.cfg + defaults
+│   ├── config.lua           ← wizard + sub-menús por rol
+│   ├── persist.lua          ← runtime state /state.dat (resume)
+│   ├── peripherals.lua      ← detección Env Detector + Geo Scanner
 │   ├── inventory.lua        ← refuel, filtrado, cofres, dumpInto
 │   ├── movement.lua         ← movimiento seguro + tracking XYZ
-│   ├── remote.lua           ← rednet listener + broadcast de status
-│   └── swarm.lua            ← GPS + ore map compartido
-├── mining/
-│   └── mining.lua           ← branch/tunnel mining, return-to-start
-├── lumber/
-│   └── lumber.lua           ← tala grid/single + replant
-├── farmer/
-│   └── farmer.lua           ← serpentina NxM + harvest+replant
+│   ├── remote.lua           ← rednet listener + status broadcast
+│   └── swarm.lua            ← GPS + ore map + scan_report + peers
+├── mining/mining.lua        ← branch/tunnel + return-to-start
+├── lumber/lumber.lua        ← tala grid/single + replant
+├── farmer/farmer.lua        ← serpentina NxM + harvest+replant
+├── scout/scout.lua          ← geoscanner + box/stationary/follow
 └── README.md
 ```
 
@@ -104,17 +128,19 @@ Cada vez que ejecutes `install` la turtle comprueba si `install.lua` ha cambiado
 - **Un cofre colocado detrás de la turtle** para volcar cosecha
 - Plot de farmland ya preparado con agua cerca
 
+**Scout:**
+- **NO necesita pico**. Upgrades: **Geo Scanner + Wireless Modem**
+- **GPS activo**: mínimo 3 computers fijas corriendo `gps host <x> <y> <z>` en rango
+- **Coal / Charcoal** para auto-refuel
+- Zona de operación **con cielo despejado** (no puede cavar)
+
 ## Cómo usar
 
-1. Coloca la turtle mirando hacia donde quieres que empiece a minar.
-2. Mete combustible (coal) y unos cuantos cofres en el inventario.
-3. Ejecuta `startup` o reinicia la turtle.
-4. Sigue el menú:
-   - Elige patrón (branch o tunnel)
-   - Longitud del túnel principal
-   - Longitud de ramas (solo branch)
-   - Separación entre ramas (solo branch)
-5. Confirma con Enter y a minar.
+1. Coloca el dispositivo (turtle / pocket / computer) en su posición inicial.
+2. Mete el inventario necesario (combustible + items del rol).
+3. Ejecuta `install` si aún no lo has hecho. La primera vez el dispositivo arranca el **wizard** y te pregunta rol + parámetros.
+4. A partir del segundo boot, el dispositivo arranca **directamente** en su rol.
+5. Para cambiar algo: ejecuta `configure` en el shell y reinicia.
 
 ## Posición inicial recomendada (mining)
 

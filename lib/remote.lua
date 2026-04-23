@@ -107,6 +107,10 @@ function snapshot()
         farmCycle      = state.farmCycle or 0,
         farmRow        = state.farmRow or 0,
         cropsHarvested = state.cropsHarvested or 0,
+        -- scout
+        scoutPatrol    = state.scoutPatrol,
+        scansDone      = state.scansDone or 0,
+        scanRadius     = state.scoutScanRadius,
         -- comunes
         slotsUsed     = used,
         remoteCmd     = state.remoteCmd,

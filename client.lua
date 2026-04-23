@@ -70,12 +70,16 @@ local MODE_BADGE = {
     mining = "M",
     lumber = "L",
     farmer = "F",
+    scout  = "S",
+    client = "C",
 }
 
 local MODE_FULL = {
     mining = "MINING",
     lumber = "LUMBER",
     farmer = "FARMER",
+    scout  = "SCOUT",
+    client = "CLIENT",
 }
 
 local function modeOf(s)
@@ -113,6 +117,8 @@ local function progressOf(s)
         return "logs:" .. (s.logsHarvested or 0)
     elseif m == "farmer" then
         return "cyc:" .. (s.farmCycle or 0)
+    elseif m == "scout" then
+        return "scn:" .. (s.scansDone or 0)
     end
     if s.shaftLength and s.shaftLength > 0 then
         return (s.currentStep or 0) .. "/" .. s.shaftLength
@@ -200,6 +206,13 @@ local function renderSingle(targetId, lastStatus, lastUpdate, messageLog)
                 s.cropsHarvested or 0, s.slotsUsed or 0))
             print(string.format(" Cycle  : %d  (fila %d)",
                 s.farmCycle or 0, s.farmRow or 0))
+        elseif m == "scout" then
+            print(string.format(" Patrol : %s  radius=%d",
+                tostring(s.scoutPatrol or "?"), s.scanRadius or 0))
+            print(string.format(" Stats  : scans=%d  ores=%d",
+                s.scansDone or 0, s.oresFound or 0))
+            print(string.format(" OreMap : %d entradas compartidas",
+                s.oreMapSize or 0))
         else
             local progPct = (s.shaftLength and s.shaftLength > 0)
                 and (s.currentStep / s.shaftLength) or 0
@@ -286,6 +299,9 @@ local function singleView(targetId)
                 end
             elseif type(msg) == "table" and msg.kind == "ore_spotted" then
                 addLog("#" .. senderId .. " " .. short(msg.name))
+                render()
+            elseif type(msg) == "table" and msg.kind == "scan_report" then
+                addLog("#" .. senderId .. " scan +" .. tostring(#(msg.ores or {})))
                 render()
             end
         end
@@ -495,6 +511,18 @@ local function fleetView()
                 elseif msg.kind == "ore_gone" and msg.pos then
                     local k = msg.pos.x .. "_" .. msg.pos.y .. "_" .. msg.pos.z
                     fleetOres[k] = nil
+                elseif msg.kind == "scan_report" and type(msg.ores) == "table" then
+                    for _, ore in ipairs(msg.ores) do
+                        local k = ore.x .. "_" .. ore.y .. "_" .. ore.z
+                        fleetOres[k] = {
+                            x = ore.x, y = ore.y, z = ore.z,
+                            name = ore.name, by = msg.by or senderId,
+                            seenAt = os.clock(),
+                        }
+                    end
+                    addFleetLog(string.format("# %d scan_report %d ores",
+                        msg.by or senderId, #msg.ores))
+                    render()
                 elseif msg.kind == "event" then
                     addFleetLog("# " .. senderId .. " " .. eventLine(msg, senderId))
                     render()

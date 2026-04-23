@@ -1,95 +1,82 @@
 -- ============================================================
--- TURTLE MULTIPROGRAM v1.2
--- Tres programas sobre la misma base:
---   - mining  : branch / tunnel mining con auto-fuel, cofres y
---               resume tras crash.
---   - lumber  : tala de arboles (grid o single con bonemeal).
---   - farmer  : cultivo automatizado de trigo/zanahoria/patata/
---               remolacha sobre un plot NxM.
--- Target: non-advanced mining turtle (term 39x13, no color).
+-- TURTLE MULTIPROGRAM v1.3
+-- Dispatcher unico. Detecta el tipo de dispositivo (turtle /
+-- pocket / computer), lee /role.cfg y arranca directamente el
+-- programa asignado. Si no hay config, abre el wizard.
+--
+-- Roles soportados:
+--   turtle    : mining | lumber | farmer | scout
+--   pocket    : client
+--   computer  : client
+--
+-- Resume: si /state.dat existe (ejecucion previa sin cierre
+-- limpio) el programa ofrece reanudar.
 -- ============================================================
 
 os.loadAPI("lib/ui.lua")
+os.loadAPI("lib/roleconfig.lua")
 os.loadAPI("lib/persist.lua")
-os.loadAPI("lib/config.lua")
 os.loadAPI("lib/inventory.lua")
 os.loadAPI("lib/movement.lua")
 os.loadAPI("lib/peripherals.lua")
 os.loadAPI("lib/remote.lua")
 os.loadAPI("lib/swarm.lua")
-os.loadAPI("mining/mining.lua")
-os.loadAPI("lumber/lumber.lua")
-os.loadAPI("farmer/farmer.lua")
+os.loadAPI("lib/config.lua")
+if turtle then
+    os.loadAPI("mining/mining.lua")
+    os.loadAPI("lumber/lumber.lua")
+    os.loadAPI("farmer/farmer.lua")
+    os.loadAPI("scout/scout.lua")
+end
 
--- State global accesible por todos los modulos
+-- ============================================================
+-- STATE
+-- ============================================================
+
 local function defaultState()
     return {
-        -- posicion relativa al inicio (turtle empieza en 0,0,0 mirando +X)
-        x = 0, y = 0, z = 0,
-        facing = 0, -- 0=+X, 1=+Z, 2=-X, 3=-Z
+        -- posicion relativa al inicio
+        x = 0, y = 0, z = 0, facing = 0,
 
         -- stats comunes
-        blocksMined = 0,
-        oresFound = 0,
-        chestsPlaced = 0,
+        blocksMined = 0, oresFound = 0, chestsPlaced = 0,
         startEpoch = os.epoch("utc"),
 
-        -- que programa correr
-        mode = "mining",    -- "mining" | "lumber" | "farmer"
+        -- rol (se sobrescribe desde /role.cfg)
+        mode = "mining",
 
-        -- config mining
-        pattern = "branch",
-        shaftLength = 30,
-        branchLength = 8,
-        branchSpacing = 3,
-        tunnelWidth = 3,
+        -- stats especificas (se incrementan en runtime)
         currentStep = 0,
         oresLog = {},
-
-        -- config lumber
-        lumberMode = "grid",        -- "grid" | "single"
-        lumberCount = 4,
-        lumberSpacing = 2,
-        useBonemeal = false,
-        lumberSleepSecs = 120,
         logsHarvested = 0,
-
-        -- config farmer
-        farmWidth = 5,
-        farmLength = 5,
-        farmSleepSecs = 600,
-        farmRow = 0,
-        farmCol = 0,
-        farmCycle = 0,
+        farmRow = 0, farmCol = 0, farmCycle = 0,
         cropsHarvested = 0,
+        scansDone = 0,
 
-        -- flags runtime
+        -- runtime flags
         resuming = false,
 
         -- peripherals (no persisten)
-        hasEnvDetector = false,
-        hasGeoScanner = false,
-        envDetector = nil,
-        geoScanner = nil,
+        hasEnvDetector = false, hasGeoScanner = false,
+        envDetector = nil, geoScanner = nil,
 
-        -- remote control (no persiste)
-        hasRemote = false,
-        hostname = nil,
-        remoteCmd = nil,
+        -- remote (no persiste)
+        hasRemote = false, hostname = nil, remoteCmd = nil,
 
         -- swarm (no persiste)
-        hasGPS = false,
-        origin = nil,
-        oreMap = {},
+        hasGPS = false, origin = nil, oreMap = {},
     }
 end
 
 _G.state = defaultState()
 
+-- ============================================================
+-- RESUME PROMPT
+-- ============================================================
+
 local function modeLabel(m)
-    if m == "lumber" then return "LUMBER" end
-    if m == "farmer" then return "FARMER" end
-    return "MINING"
+    local labels = { mining = "MINING", lumber = "LUMBER", farmer = "FARMER", scout = "SCOUT", client = "CLIENT" }
+    return labels[m] or "?"
 end
 
 local function askResume(saved)
@@ -98,30 +85,29 @@ local function askResume(saved)
     ui.center(2, "SESION ANTERIOR DETECTADA")
     ui.hline(3, "=")
 
-    local mode = saved.mode or "mining"
-    term.setCursorPos(2, 5)
-    term.write("Programa: " .. modeLabel(mode))
+    local m = saved.mode or "mining"
+    term.setCursorPos(2, 5); term.write("Programa: " .. modeLabel(m))
 
     term.setCursorPos(2, 6)
-    if mode == "lumber" then
-        term.write("Config  : "..tostring(saved.lumberMode).." x"..tostring(saved.lumberCount))
-    elseif mode == "farmer" then
-        term.write("Plot    : "..tostring(saved.farmWidth).."x"..tostring(saved.farmLength)
-            .."  ciclo "..tostring(saved.farmCycle or 0))
+    if m == "lumber" then
+        term.write("Config  : " .. tostring(saved.lumberMode) .. " x" .. tostring(saved.lumberCount))
+    elseif m == "farmer" then
+        term.write("Plot    : " .. tostring(saved.farmWidth) .. "x" .. tostring(saved.farmLength)
+            .. "  ciclo " .. tostring(saved.farmCycle or 0))
+    elseif m == "scout" then
+        term.write("Scout   : " .. tostring(saved.scoutPatrol or "?")
+            .. "  scans=" .. tostring(saved.scansDone or 0))
     else
-        term.write("Patron  : "..tostring(saved.pattern)
-            .."  "..tostring(saved.currentStep).."/"..tostring(saved.shaftLength))
+        term.write("Patron  : " .. tostring(saved.pattern)
+            .. "  " .. tostring(saved.currentStep) .. "/" .. tostring(saved.shaftLength))
     end
 
     term.setCursorPos(2, 7)
-    term.write("Pos     : X="..tostring(saved.x).." Y="..tostring(saved.y).." Z="..tostring(saved.z))
+    term.write("Pos     : X=" .. tostring(saved.x) .. " Y=" .. tostring(saved.y) .. " Z=" .. tostring(saved.z))
 
-    term.setCursorPos(2, 9)
-    term.write("IMPORTANTE: la turtle debe estar EN esa")
-    term.setCursorPos(2, 10)
-    term.write("posicion. Si la moviste, empieza nueva.")
-    term.setCursorPos(2, 12)
-    term.write("[R] Reanudar  [N] Nueva  [D] Borrar")
+    term.setCursorPos(2, 9);  term.write("IMPORTANTE: la turtle debe estar EN esa")
+    term.setCursorPos(2, 10); term.write("posicion. Si la moviste, empieza nueva.")
+    term.setCursorPos(2, 12); term.write("[R] Reanudar  [N] Nueva  [D] Borrar")
 
     while true do
         local _, key = os.pullEvent("key")
@@ -131,25 +117,70 @@ local function askResume(saved)
     end
 end
 
-local function dispatchProgram()
-    if state.mode == "lumber" then
+-- ============================================================
+-- DISPATCH POR ROL
+-- ============================================================
+
+local function dispatchRole(role)
+    if role == "lumber" then
         lumber.run()
-    elseif state.mode == "farmer" then
+    elseif role == "farmer" then
         farmer.run()
+    elseif role == "scout" then
+        scout.run()
+    elseif role == "client" then
+        -- Cargar y ejecutar client.lua directamente
+        shell.run("/client.lua")
     else
         mining.run()
     end
 end
 
+-- ============================================================
+-- MAIN
+-- ============================================================
+
 local function main()
+    local deviceType = roleconfig.detectDeviceType()
+
     ui.clear()
     ui.splash()
 
-    -- Detectar sesion anterior
+    -- 1. Cargar config persistente (rol + params)
+    local cfg = roleconfig.load()
+
+    -- Primer boot: wizard. Pocket/computer default = client.
+    if not cfg or not cfg.role then
+        if deviceType ~= "turtle" then
+            -- Para pocket/computer, auto-asignamos client sin preguntar
+            cfg = roleconfig.blankConfig("client", deviceType)
+            cfg.role = "client"
+            roleconfig.save(cfg)
+        else
+            cfg = config.wizardFromScratch()
+        end
+    end
+
+    roleconfig.applyToState(cfg)
+
+    -- 2. Client: no tiene runtime state, despachar directo
+    if cfg.role == "client" then
+        dispatchRole("client")
+        return
+    end
+
+    -- 3. Turtle roles: revisar resume mid-run
     local saved = persist.load()
+    if saved and saved.mode and saved.mode ~= cfg.role then
+        -- El rol cambio desde la ultima sesion. El state.dat es de otro
+        -- programa y no tiene sentido reanudar.
+        persist.clear()
+        saved = nil
+    end
     if saved then
         local choice = askResume(saved)
         if choice == "resume" then
+            -- El state runtime (x/y/z/counters/currentStep) se sobreescribe
             for k, v in pairs(saved) do
                 state[k] = v
             end
@@ -159,27 +190,23 @@ local function main()
         end
     end
 
+    -- 4. Peripherals + remote + swarm
     peripherals.detect()
     remote.init()
-
     if state.hasRemote then
         swarm.initGPS()
         swarm.requestSync()
     end
 
-    if not state.resuming then
-        config.runMenu()
-    end
-
-    -- Programa + listener rednet en paralelo.
+    -- 5. Ejecutar programa + listener en paralelo
     if state.hasRemote then
         parallel.waitForAny(
-            function() dispatchProgram() end,
+            function() dispatchRole(cfg.role) end,
             function() remote.listener() end
         )
         remote.shutdown()
     else
-        dispatchProgram()
+        dispatchRole(cfg.role)
     end
 
     ui.finalReport()
@@ -191,8 +218,10 @@ if not ok then
     print("ERROR FATAL:")
     print(err)
     print("")
-    print("Posicion estimada: x="..state.x.." y="..state.y.." z="..state.z)
-    print("El checkpoint se conserva para reanudar.")
+    if state then
+        print("Posicion estimada: x="..state.x.." y="..state.y.." z="..state.z)
+        print("El checkpoint se conserva para reanudar.")
+    end
     print("")
     print("Pulsa cualquier tecla para salir.")
     os.pullEvent("key")
