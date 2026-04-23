@@ -4,18 +4,18 @@
 --
 -- GEOMETRIA:
 --   La turtle VUELA por encima del plot para no pisar farmland.
---   Al arrancar cada ciclo, sube FLY_HEIGHT (2) bloques sobre su
+--   Al arrancar cada ciclo, sube FLY_HEIGHT (1) bloque sobre su
 --   posicion de partida. Tras caminar el plot, baja para volcar.
 --
 --   Setup fisico:
---     [C][T][F][F][F]...       <- turtle en path/camino adyacente
---     [ ][ ][f][f][f]...          farmland debajo (f)
+--     [C][T][.][.][.]...       <- turtle sobre grass/path, adyacente
+--     [ ][ ][C][C][C]...          cultivos (C) crecen a la misma Y
+--     [ ][ ][F][F][F]...          farmland (F) 1 abajo
 --
---   C = cofre atras. T = turtle. F = farmland con cultivo.
---
---   Al subir 2 bloques, la turtle queda 2 por encima del farmland.
---   inspectDown() ve el cultivo (farmland_y + 1 = turtle_y - 1). Ok.
---   Avanza sobre el plot sin tocar el suelo.
+--   Cuando colocas la turtle sobre un bloque, ya esta en el slot
+--   encima = MISMO Y que un cultivo creciendo en el farmland
+--   adyacente. Subiendo SOLO 1 bloque, la turtle queda a
+--   crop_Y + 1: inspectDown ve el cultivo y avanzar pasa por aire.
 --
 -- REQUISITOS:
 --   - El plot ya tiene que estar preparado (farmland regado).
@@ -28,7 +28,10 @@
 -- y asi. Al final vuelve, baja, vuelca, duerme, vuelve a subir.
 -- ============================================================
 
-local FLY_HEIGHT = 2
+-- Al colocar la turtle sobre un bloque (grass/dirt/path) ya ocupa el
+-- slot encima (mismo Y que crece un cultivo). Con 1 sola subida
+-- queda 1 bloque sobre el cultivo -> inspectDown lo ve.
+local FLY_HEIGHT = 1
 
 -- Nombre del bloque -> { seed = item usado para replantar, maxAge = N }
 local CROPS = {
@@ -162,19 +165,15 @@ end
 
 -- ============================================================
 -- ALTITUDE
--- Sube FLY_HEIGHT bloques desde la posicion de inicio.
+-- Sube FLY_HEIGHT=1 bloque desde la posicion de inicio.
 --
--- La geometria clave:
---   Y_farmland + 0 = el suelo arado
---   Y_farmland + 1 = donde crece el cultivo (mismo bloque que la
---                    turtle si solo sube 1 -> colision y
---                    inspectDown ve farmland, NO el cultivo)
---   Y_farmland + 2 = altitud correcta para volar y ver cultivos
+-- Clave: la turtle al colocarse sobre un bloque ya ocupa el slot
+-- encima (= mismo Y que crece un cultivo en farmland adyacente).
+-- Subiendo 1 mas, la turtle queda en crop_Y + 1 -> inspectDown
+-- ve el cultivo debajo y puede avanzar por aire.
 --
--- Early-return si inspectDown ve un cultivo: ya estamos 1 bloque
--- por encima del cultivo, altitud perfecta.
--- NUNCA early-return al ver farmland: aun estamos a nivel del
--- cultivo y falta 1 bloque.
+-- Early-return si inspectDown ya ve un cultivo: estamos justo
+-- donde queremos.
 -- ============================================================
 
 local function ascendToFly()
