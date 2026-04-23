@@ -3,25 +3,32 @@
 -- Cultivo automatizado de trigo, zanahoria, patata y remolacha.
 --
 -- GEOMETRIA:
---   La turtle se mueve POR ENCIMA del farmland. Es decir:
---     - Farmland a Y=0 (el suelo arado)
---     - Cultivos creciendo a Y=1 (estan plantados en el farmland)
---     - Turtle a Y=2 (un bloque encima del cultivo)
---   turtle.inspectDown() devuelve el cultivo a Y=1.
---   turtle.digDown() / turtle.placeDown() operan sobre Y=1.
+--   La turtle VUELA por encima del plot para no pisar farmland.
+--   Al arrancar cada ciclo, sube FLY_HEIGHT (2) bloques sobre su
+--   posicion de partida. Tras caminar el plot, baja para volcar.
 --
---   Casa = (0,0,0) mirando +X.
---   El plot se extiende hacia +X (ancho W) y +Z (largo L).
---   Cofre atras en (-1,0,0) para volcar cosecha.
+--   Setup fisico:
+--     [C][T][F][F][F]...       <- turtle en path/camino adyacente
+--     [ ][ ][f][f][f]...          farmland debajo (f)
+--
+--   C = cofre atras. T = turtle. F = farmland con cultivo.
+--
+--   Al subir 2 bloques, la turtle queda 2 por encima del farmland.
+--   inspectDown() ve el cultivo (farmland_y + 1 = turtle_y - 1). Ok.
+--   Avanza sobre el plot sin tocar el suelo.
 --
 -- REQUISITOS:
 --   - El plot ya tiene que estar preparado (farmland regado).
+--   - Turtle adyacente al plot, AL MISMO NIVEL que el farmland.
+--   - Chest directamente atras (tambien al mismo nivel).
 --   - Semillas en inventario para los cultivos que se cultiven.
 --   - Agua cada 9x9 bloques de farmland.
 --
 -- Patron: serpentina. Recorre fila +X, avanza 1 en Z, vuelve -X,
--- avanza 1 en Z, y asi. Al final vuelve a casa, vuelca, duerme.
+-- y asi. Al final vuelve, baja, vuelca, duerme, vuelve a subir.
 -- ============================================================
+
+local FLY_HEIGHT = 2
 
 -- Nombre del bloque -> { seed = item usado para replantar, maxAge = N }
 local CROPS = {
@@ -154,6 +161,41 @@ local function walkPlot()
 end
 
 -- ============================================================
+-- ALTITUDE
+-- Sube FLY_HEIGHT bloques desde la posicion de inicio. Si detecta
+-- farmland/cultivo antes de llegar (usuario ya estaba volando),
+-- para pronto. Asi soporta varios setups sin config extra.
+-- ============================================================
+
+local function ascendToFly()
+    local target = FLY_HEIGHT
+    for _ = 1, target do
+        -- Si ya vemos farmland o cultivo debajo, ya estamos bien
+        local ok, block = turtle.inspectDown()
+        if ok and block and block.name then
+            if block.name == "minecraft:farmland" or CROPS[block.name] then
+                return true
+            end
+        end
+        if not movement.safeUp() then
+            ui.setStatus("No puedo subir!")
+            return false
+        end
+    end
+    return true
+end
+
+local function descendToGround()
+    while state.y > 0 do
+        if not movement.safeDown() then
+            ui.setStatus("No puedo bajar!")
+            return false
+        end
+    end
+    return true
+end
+
+-- ============================================================
 -- NAVEGACION HOME
 -- Vuelve a (0,0,0) mirando +X desde cualquier punto del plot.
 -- ============================================================
@@ -214,6 +256,14 @@ function run()
 
     local sleepSecs = state.farmSleepSecs or 600
 
+    -- Subir a altitud de trabajo antes del primer ciclo
+    ui.setStatus("Subiendo a altitud")
+    if not ascendToFly() then
+        ui.setStatus("ERROR: no hay espacio arriba")
+        sleep(2)
+        return
+    end
+
     while true do
         if checkRemoteCmd() then break end
 
@@ -223,13 +273,21 @@ function run()
 
         walkPlot()
         returnHome()
+        descendToGround()     -- bajar para alcanzar el cofre
         dumpAtHome()
         persist.save()
 
         if checkRemoteCmd() then break end
         ui.setStatus("Esperando "..sleepSecs.."s")
         sleepInterruptible(sleepSecs)
+
+        if checkRemoteCmd() then break end
+        -- volver a subir para el siguiente ciclo
+        ascendToFly()
     end
+
+    -- Al terminar (stop / home remoto): asegurarnos de estar en el suelo
+    descendToGround()
 
     if state.remoteCmd == "stop" then
         ui.setStatus("STOP farmer - checkpoint OK")
