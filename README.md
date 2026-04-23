@@ -35,13 +35,13 @@ Cada dispositivo elige su rol **una vez** en el primer boot y queda guardado en 
 
 ## Qué hace (lumber)
 
-Automatiza una línea de árboles y repone saplings tras talar.
+Automatiza una granja de árboles en patrón **side-row** (ver [Layout](#layout-lumber-grid)).
 
-- **Modo grid**: N árboles en línea recta con un espaciado configurable (por defecto 2 bloques entre ellos). La turtle recorre la fila, inspecciona cada posición, y si hay un tronco maduro lo tala subiendo por la columna del tronco. Tras talar, replanta un sapling y opcionalmente aplica bonemeal. Al terminar la pasada vuelve a casa y vuelca logs en el cofre detrás.
-- **Modo single**: un único árbol delante de la turtle; pensado para bonemeal (plantar → bonemeal 3x → talar → repetir).
-- **Sleep configurable** entre ciclos (30s–1h).
-- **Sapling slot**: la turtle busca automáticamente cualquier sapling en su inventario. Spruce es el ideal porque crece en columna 1×1 siempre.
-- Funciona mejor con spruce; oak/birch a veces ramifican y el tronco se queda con leaves que la turtle ignora.
+- **Modo grid**: la turtle camina por un carril central, con árboles a uno o ambos lados (`rows=1` o `2`). En cada parada: gira hacia el árbol, lo inspecciona, si es log maduro lo tala subiendo por la columna del tronco, replanta un sapling y opcionalmente aplica bonemeal. Vuelve a mirar el frente y avanza `spacing` bloques hasta la siguiente parada. Al terminar la pasada vuelve a casa y vuelca logs en el cofre detrás.
+- **Modo single**: un único árbol delante de la turtle, estacionario; pensado para bonemeal (plantar → bonemeal 3× → talar → repetir).
+- **Sleep configurable** entre ciclos (5s–1h).
+- **Sapling slot**: la turtle busca automáticamente cualquier sapling en su inventario. Spruce es el ideal porque crece en columna 1×1 sin ramas.
+- **Nunca pisa donde planta**: los trees spots están en una columna Z distinta del carril, así los saplings recién plantados no bloquean el avance.
 
 ## Qué hace (scout)
 
@@ -150,17 +150,28 @@ Cada vez que ejecutes `install` la turtle comprueba si `install.lua` ha cambiado
 
 ## Layout (lumber grid)
 
-La turtle mira +X. Los árboles crecen delante de ella en las posiciones impares:
+Patrón **side-row**: la turtle camina por un carril central y los árboles están a UN LADO o a AMBOS. Nunca pisa dónde planta.
 
 ```
-[CHEST] [TURTLE] [air] [T1] [air] [T2] [air] [T3] ...
-  -1       0       1     2    3     4    5     6
+Z=+1:   T . T . T . T       <- row derecho (trees)
+Z= 0:   @ . . . . . .       <- carril de la turtle (empieza en @)
+Z=-1:   T . T . T . T       <- row izquierdo (solo si rows=2)
+        X=0 1 2 3 4 5 6
 ```
 
-- La turtle descansa entre árboles (x=0, 2, 4...).
-- Los saplings se plantan en x=1, 3, 5... (bloques impares), con tierra debajo (y=-1).
-- Cofre detrás de la turtle (x=-1) para volcar logs.
-- Espaciado entre árboles configurable; 2 es lo mínimo para que las hojas no bloqueen el paso.
+- Cofre detrás de la turtle en `(-1, 0, 0)`.
+- Tierra/grass **1 bloque bajo cada tree spot**: `(X, -1, +1)` para el row derecho y `(X, -1, -1)` para el izquierdo.
+- La turtle arranca en `(0, 0, 0)` mirando `+X`.
+- `count` = paradas en el carril; `spacing` = bloques entre paradas (mín 2); `rows` = 1 ó 2.
+- Total de árboles = `count * rows`.
+- Spruce recomendado (tronco 1×1). Oak/birch funcionan pero a veces ramifican.
+
+Flujo por parada:
+1. Girar a la derecha (+Z) → procesar árbol derecho (chop si log, plant sapling, bonemeal opcional).
+2. Volver a mirar +X.
+3. Si `rows=2`, girar a la izquierda (-Z) → procesar árbol izquierdo.
+4. Volver a mirar +X.
+5. Avanzar `spacing` bloques.
 
 ## Layout (farmer)
 

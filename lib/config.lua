@@ -70,8 +70,12 @@ local function configureLumber(cfg)
     }, cfg.mode == "single" and 2 or 1)
 
     if cfg.mode == "grid" then
-        cfg.count   = ui.promptNumber("ARBOLES EN LINEA", cfg.count or 4, 1, 20)
-        cfg.spacing = ui.promptNumber("ESPACIADO",        cfg.spacing or 2, 2, 6)
+        cfg.count   = ui.promptNumber("PARADAS EN LINEA",  cfg.count or 4, 1, 20)
+        cfg.spacing = ui.promptNumber("ESPACIADO X",       cfg.spacing or 2, 2, 6)
+        cfg.rows    = ui.menu("ROWS DE ARBOLES", {
+            { label = "1 - solo lado derecho (+Z)", value = 1 },
+            { label = "2 - ambos lados (recomendado)", value = 2 },
+        }, cfg.rows == 1 and 1 or 2)
     end
 
     cfg.bonemeal = ui.menu("USAR BONEMEAL", {
@@ -165,7 +169,7 @@ local function confirmAndShow(cfg)
     elseif cfg.role == "lumber" and cfg.lumber then
         local l = cfg.lumber
         term.setCursorPos(2, y);   term.write("Modo   : " .. tostring(l.mode))
-        term.setCursorPos(2, y+1); term.write("N      : " .. tostring(l.count) .. " spacing " .. tostring(l.spacing))
+        term.setCursorPos(2, y+1); term.write("Paradas: " .. tostring(l.count) .. " x " .. tostring(l.rows or 2) .. " rows  sp=" .. tostring(l.spacing))
         term.setCursorPos(2, y+2); term.write("Bm " .. (l.bonemeal and "si" or "no") .. "  sleep " .. tostring(l.sleepSecs) .. "s")
     elseif cfg.role == "farmer" and cfg.farmer then
         local f = cfg.farmer

@@ -1,39 +1,36 @@
 -- ============================================================
 -- LUMBER MODULE
--- Tala de arboles. Dos modos:
---   - "grid": linea de N arboles espaciados. La turtle recorre,
---     tala los maduros, replanta saplings y vuelve a casa a
---     volcar logs. Duerme X segundos y repite.
---   - "single": un solo arbol delante. Opcionalmente aplica
---     bonemeal para acelerar el crecimiento.
+-- Tala de arboles con patron "side-row": la turtle camina por
+-- un carril central y los arboles estan a UN LADO (o ambos).
+-- Nunca pisa donde planta. Idea tomada del patron standard de
+-- la comunidad CC (asciiAvenger/cc-tree-farm, FTB docs).
 --
--- GEOMETRIA ASUMIDA (grid):
---   Posicion casa = (0,0,0) mirando +X.
---   Tree spot i en x = (i-1)*spacing + 1  (i=1..count).
---   La turtle descansa en x=(i-1)*spacing entre arboles.
---   Cofre de descarga atras, en (-1, 0, 0).
+-- Dos modos:
+--   - "grid":    N paradas en linea. En cada parada procesa
+--                1 o 2 arboles a los lados (config rows=1 o 2).
+--   - "single":  un solo arbol delante. Estacionario. Ideal
+--                con bonemeal para acelerar crecimiento.
 --
--- GEOMETRIA ASUMIDA (single):
+-- GEOMETRIA (grid, rows=2 ejemplo):
+--     Z=+1:    T . T . T . T         <- row derecho (tree spots)
+--     Z= 0:    @ . . . . . .         <- carril turtle (empieza en @)
+--     Z=-1:    T . T . T . T         <- row izquierdo (si rows=2)
+--              X=0 1 2 3 4 5 6
+--     Cofre: (-1, 0, 0)
+--
+-- El turtle nunca camina sobre las posiciones de arbol (Z=+-1).
+-- En cada parada: turnRight -> processTree -> turnLeft (volver a +X).
+-- Si rows=2, despues: turnLeft -> processTree -> turnRight.
+--
+-- GEOMETRIA (single):
 --   Turtle en (0,0,0) mirando el sapling en (1,0,0).
---   Cofre atras en (-1,0,0). Bonemeal en slot si useBonemeal=true.
+--   Cofre atras (-1,0,0). Bonemeal en slot si useBonemeal=true.
 --
 -- Requisitos de inventario:
---   - Saplings (cualquier tipo; spruce = mejor por tronco 1x1)
+--   - Saplings (spruce = mejor: tronco 1x1 sin ramas)
 --   - Coal o charcoal para auto-refuel
 --   - Bonemeal (opcional)
 -- ============================================================
-
--- ============================================================
--- INSPECCION
--- ============================================================
-
-local function inspectIsLog(inspectFn)
-    local ok, data = inspectFn()
-    if ok and data and data.name and inventory.isLog(data.name) then
-        return true, data
-    end
-    return false, data
-end
 
 -- ============================================================
 -- REMOTE COMMAND CHECK
@@ -63,28 +60,28 @@ local function notifyLog(name)
 end
 
 -- ============================================================
--- TALADO DE TRONCO
--- La turtle esta mirando un log (x+1). Cavar log base, entrar en
--- su columna, subir cavando mientras haya log encima, volver al
--- suelo y salir de la columna hacia atras. Funciona para arboles
--- de tronco 1x1 (spruce es el ideal); si el arbol ramifica, para
--- al primer bloque no-log y las hojas se dejan que despawneen.
+-- TALADO DE TRONCO (1x1, spruce-friendly)
+-- La turtle esta mirando un bloque de log. Cava, entra en la
+-- columna, sube cavando mientras haya log encima, vuelve al
+-- suelo y sale de la columna hacia atras. Queda en la posicion
+-- de partida con el mismo facing.
 -- ============================================================
 
 local function chopTrunkInFront()
     ui.setStatus("Talando arbol")
 
-    local isLog, data = inspectIsLog(turtle.inspect)
-    if not isLog then return false end
+    local ok, data = turtle.inspect()
+    if not (ok and data and data.name and inventory.isLog(data.name)) then
+        return false
+    end
 
-    local species = data and data.name or "unknown"
+    local species = data.name
     turtle.dig()
     state.blocksMined = (state.blocksMined or 0) + 1
     state.logsHarvested = (state.logsHarvested or 0) + 1
-    if not movement.safeForward() then
-        -- no pudimos entrar; intentar un step atras para no dejar la turtle atorada
-        return false
-    end
+
+    local entered = movement.safeForward()
+    if not entered then return false end
 
     local climbed = 0
     while true do
@@ -100,12 +97,11 @@ local function chopTrunkInFront()
         end
     end
 
-    -- Volver al suelo
     for _ = 1, climbed do
         if not movement.safeDown() then break end
     end
 
-    -- Salir del hueco hacia atras (respecto al arbol)
+    -- Salir de la columna: dar la vuelta, avanzar 1, dar la vuelta
     movement.turnAround()
     movement.safeForward()
     movement.turnAround()
@@ -135,34 +131,39 @@ local function applyBonemealInFront()
     return applied
 end
 
--- Procesa el tree spot que hay delante. Devuelve true si talo.
-local function processTreeFront()
-    local ok, data = turtle.inspect()
+-- ============================================================
+-- PROCESSEAR UN TREE SPOT EN LA DIRECCION DADA
+-- targetFacing: 0..3, direccion en la que hay un sapling/arbol
+-- La turtle retorna al facing original.
+-- ============================================================
 
+local function processTreeAtSide(targetFacing, originalFacing)
+    movement.faceDirection(targetFacing)
+
+    local ok, data = turtle.inspect()
     if ok and data and data.name and inventory.isLog(data.name) then
         chopTrunkInFront()
-        sleep(0.3) -- que se caigan las leaves
+        sleep(0.2)
         plantSaplingInFront()
         applyBonemealInFront()
-        return true
-    end
-
-    if not ok then
-        -- Aire: intentar plantar
+    elseif not ok then
+        -- Aire: plantar sapling
         plantSaplingInFront()
         applyBonemealInFront()
-        return false
+    else
+        -- Hay un sapling joven u otra cosa
+        if data and data.name and data.name:find("sapling") then
+            applyBonemealInFront()
+        end
     end
 
-    -- Hay un bloque (probablemente sapling creciendo). Solo bonemeal.
-    if data and data.name and data.name:find("sapling") then
-        applyBonemealInFront()
-    end
-    return false
+    movement.faceDirection(originalFacing)
 end
 
 -- ============================================================
--- NAVEGACION (GRID)
+-- NAVEGACION HOME
+-- Suponemos que el turtle esta siempre en Z=0 (carril).
+-- Volvemos en -X hasta x=0. Luego orientamos a +X.
 -- ============================================================
 
 local function returnHomeFromPos()
@@ -189,12 +190,13 @@ local function dumpAtHome()
 end
 
 -- ============================================================
--- PASADA GRID / SINGLE
+-- GRID PASS (side-row pattern)
 -- ============================================================
 
 local function gridPass()
-    local count = state.lumberCount or 4
+    local count   = state.lumberCount or 4
     local spacing = state.lumberSpacing or 2
+    local rows    = state.lumberRows or 2   -- 1 = solo derecha, 2 = ambos
     ui.drawDashboard()
 
     for i = 1, count do
@@ -203,9 +205,15 @@ local function gridPass()
             dumpAtHome()
             return false
         end
-        ui.setStatus("Arbol "..i.."/"..count)
+        ui.setStatus("Parada " .. i .. "/" .. count)
 
-        processTreeFront()
+        -- Row derecho (+Z, facing 1)
+        processTreeAtSide(1, 0)
+
+        -- Row izquierdo (-Z, facing 3) si rows=2
+        if rows >= 2 then
+            processTreeAtSide(3, 0)
+        end
 
         if inventory.isAlmostFull() then
             inventory.compact()
@@ -234,10 +242,29 @@ local function gridPass()
     return true
 end
 
+-- ============================================================
+-- SINGLE PASS (estacionario, delante)
+-- ============================================================
+
 local function singlePass()
     ui.drawDashboard()
     ui.setStatus("Single tree")
-    processTreeFront()
+
+    local ok, data = turtle.inspect()
+    if ok and data and data.name and inventory.isLog(data.name) then
+        chopTrunkInFront()
+        sleep(0.2)
+        plantSaplingInFront()
+        applyBonemealInFront()
+    elseif not ok then
+        plantSaplingInFront()
+        applyBonemealInFront()
+    else
+        if data and data.name and data.name:find("sapling") then
+            applyBonemealInFront()
+        end
+    end
+
     if inventory.isAlmostFull() then
         dumpAtHome()
     end
@@ -277,7 +304,7 @@ function run()
         end
 
         if checkRemoteCmd() then break end
-        ui.setStatus("Esperando "..sleepSecs.."s")
+        ui.setStatus("Esperando " .. sleepSecs .. "s")
         sleepInterruptible(sleepSecs)
     end
 

@@ -33,6 +33,7 @@ DEFAULTS = {
         mode      = "grid",
         count     = 4,
         spacing   = 2,
+        rows      = 2,          -- 1 = solo derecha, 2 = ambos lados
         bonemeal  = false,
         sleepSecs = 120,
     },
@@ -150,6 +151,7 @@ function applyToState(cfg)
     state.lumberMode      = l.mode
     state.lumberCount     = l.count
     state.lumberSpacing   = l.spacing
+    state.lumberRows      = l.rows
     state.useBonemeal     = l.bonemeal
     state.lumberSleepSecs = l.sleepSecs
 
