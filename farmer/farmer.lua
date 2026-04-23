@@ -85,23 +85,69 @@ local function selectSeed(seedName)
     return nil
 end
 
+-- Si hay farmland vacia debajo, planta la PRIMERA semilla conocida
+-- que tengamos en inventario. Sirve para sembrar un plot recien
+-- arado sin tener que esperar a un primer ciclo de cultivos maduros.
+local function plantAnySeed()
+    for _, crop in pairs(CROPS) do
+        if selectSeed(crop.seed) then
+            if turtle.placeDown() then
+                state.cropsPlanted = (state.cropsPlanted or 0) + 1
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function processCell()
     local ok, block = turtle.inspectDown()
-    if not ok or not block or not block.name then return false end
+    if not ok or not block or not block.name then
+        ui.setStatus("cell: aire/null")
+        return false
+    end
 
+    -- Caso 1: farmland sin cultivo -> plantar algo si tenemos semilla
+    if block.name == "minecraft:farmland" then
+        if plantAnySeed() then
+            ui.setStatus("plantado en farmland")
+            return true
+        end
+        ui.setStatus("farmland sin semilla")
+        return false
+    end
+
+    -- Caso 2: bloque desconocido (ni cultivo ni farmland) -> skip
     local crop = CROPS[block.name]
-    if not crop then return false end
+    if not crop then
+        ui.setStatus("cell: " .. block.name:gsub("minecraft:", ""))
+        return false
+    end
 
+    -- Caso 3: cultivo joven -> esperar
     local age = (block.state and block.state.age) or 0
-    if age < crop.maxAge then return false end
+    if age < crop.maxAge then
+        ui.setStatus("joven age="..age.."/"..crop.maxAge)
+        return false
+    end
 
-    turtle.digDown()
+    -- Caso 4: cultivo maduro -> cosechar y replantar
+    if not turtle.digDown() then
+        ui.setStatus("digDown fallo")
+        return false
+    end
     state.cropsHarvested = (state.cropsHarvested or 0) + 1
     notifyCrop(block.name)
 
-    -- Replantar si hay semilla. Si no, queda farmland vacia.
     if selectSeed(crop.seed) then
-        turtle.placeDown()
+        if turtle.placeDown() then
+            state.cropsPlanted = (state.cropsPlanted or 0) + 1
+            ui.setStatus("harvested+replanted")
+        else
+            ui.setStatus("placeDown fallo")
+        end
+    else
+        ui.setStatus("harvested, sin semilla")
     end
     return true
 end
@@ -115,7 +161,13 @@ local function walkPlot()
     local W = math.max(1, state.farmWidth or 5)
     local L = math.max(1, state.farmLength or 5)
 
-    -- Primera celda: bajo la turtle
+    -- APPROACH: la turtle empieza FUERA del plot (sobre grass/path
+    -- adyacente). El primer paso la mete en la primera celda del
+    -- plot para que processCell vea el cultivo/farmland.
+    if not movement.safeForward() then
+        ui.setStatus("No puedo entrar al plot")
+        return false
+    end
     processCell()
     if inventory.isAlmostFull() then
         inventory.compact()
