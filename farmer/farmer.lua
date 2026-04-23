@@ -162,20 +162,28 @@ end
 
 -- ============================================================
 -- ALTITUDE
--- Sube FLY_HEIGHT bloques desde la posicion de inicio. Si detecta
--- farmland/cultivo antes de llegar (usuario ya estaba volando),
--- para pronto. Asi soporta varios setups sin config extra.
+-- Sube FLY_HEIGHT bloques desde la posicion de inicio.
+--
+-- La geometria clave:
+--   Y_farmland + 0 = el suelo arado
+--   Y_farmland + 1 = donde crece el cultivo (mismo bloque que la
+--                    turtle si solo sube 1 -> colision y
+--                    inspectDown ve farmland, NO el cultivo)
+--   Y_farmland + 2 = altitud correcta para volar y ver cultivos
+--
+-- Early-return si inspectDown ve un cultivo: ya estamos 1 bloque
+-- por encima del cultivo, altitud perfecta.
+-- NUNCA early-return al ver farmland: aun estamos a nivel del
+-- cultivo y falta 1 bloque.
 -- ============================================================
 
 local function ascendToFly()
     local target = FLY_HEIGHT
     for _ = 1, target do
-        -- Si ya vemos farmland o cultivo debajo, ya estamos bien
         local ok, block = turtle.inspectDown()
-        if ok and block and block.name then
-            if block.name == "minecraft:farmland" or CROPS[block.name] then
-                return true
-            end
+        if ok and block and block.name and CROPS[block.name] then
+            -- Ya estamos sobre un cultivo (1 por encima). Stop.
+            return true
         end
         if not movement.safeUp() then
             ui.setStatus("No puedo subir!")
