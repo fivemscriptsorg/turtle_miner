@@ -111,6 +111,25 @@ function snapshot()
         scoutPatrol    = state.scoutPatrol,
         scansDone      = state.scansDone or 0,
         scanRadius     = state.scoutScanRadius,
+        -- loader
+        followTarget   = state.followTarget,
+        liveTargetId   = state.liveTargetId,
+        cruiseAltY     = state.cruiseAltY,
+        chunkPadding   = state.chunkPadding,
+        lastTargetAt   = state.lastTargetAt,
+        lastTargetAbs  = state.lastTargetAbs,
+        -- quarry
+        quarryMode     = state.quarryMode,
+        quarryWidth    = state.quarryWidth,
+        quarryLength   = state.quarryLength,
+        quarryMaxDepth = state.quarryMaxDepth,
+        quarryLayer    = state.quarryLayer or 0,
+        quarryRow      = state.quarryRow or 0,
+        quarryCol      = state.quarryCol or 0,
+        quarryDone     = state.quarryDone == true,
+        unloadCycles   = state.unloadCycles or 0,
+        unloadStuck    = state.unloadStuck == true,
+        storageSide    = state.storageSide,
         -- swarm P2P health
         tombstones    = (swarm and swarm.tombstoneCount) and swarm.tombstoneCount() or 0,
         peers         = (swarm and swarm.peerCount) and swarm.peerCount() or 0,
@@ -156,6 +175,26 @@ function handleMessage(senderId, msg)
     elseif action == "stop" then
         state.remoteCmd = "stop"
         reply(senderId, { kind = "ack", action = "stop" })
+    elseif action == "follow" then
+        -- Cambio de target para el rol loader. Persiste en /role.cfg
+        -- para que sobreviva reinicios.
+        if msg.auto then
+            state.followTarget = "auto"
+        elseif msg.targetId == nil then
+            state.followTarget = nil
+        else
+            state.followTarget = msg.targetId
+        end
+        state.liveTargetId = nil
+        pcall(function()
+            local cfg = roleconfig.load()
+            if cfg then
+                cfg.loader = cfg.loader or {}
+                cfg.loader.followTarget = state.followTarget or "auto"
+                roleconfig.save(cfg)
+            end
+        end)
+        reply(senderId, { kind = "ack", action = "follow", target = state.followTarget })
     end
 end
 

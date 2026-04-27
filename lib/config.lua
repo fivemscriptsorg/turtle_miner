@@ -23,6 +23,8 @@ function pickRole(deviceType)
         lumber = "Tala de arboles (lumber)",
         farmer = "Cultivos (farmer)",
         scout  = "Scout (mapea con geoscanner)",
+        loader = "Loader (chunky, sigue a otra)",
+        quarry = "Quarry (rectangulo top-down)",
         client = "Cliente de control remoto",
     }
 
@@ -126,6 +128,71 @@ local function configureScout(cfg)
 end
 
 -- ============================================================
+-- LOADER CONFIG  (chunky turtle follower)
+-- ============================================================
+
+local function configureLoader(cfg)
+    -- Target: escanea la red ahora mismo y deja elegir, o "auto".
+    local opts = { { label = "AUTO (sigue a la primera visible)", value = "auto" } }
+    pcall(function()
+        -- Intentar abrir modem aqui es prematuro; si no hay modem
+        -- disponible rednet.lookup devuelve nada y solo queda AUTO.
+        local ids = { rednet.lookup("turtle_miner") }
+        for _, id in ipairs(ids) do
+            if id ~= os.getComputerID() then
+                table.insert(opts, { label = "Turtle #" .. id, value = id })
+            end
+        end
+    end)
+    table.insert(opts, { label = "Introducir ID manualmente", value = "manual" })
+
+    local pick = ui.menu("TARGET A SEGUIR", opts, 1)
+    if pick == "manual" then
+        cfg.followTarget = ui.promptNumber("ID DE LA TURTLE", cfg.followTarget and tonumber(cfg.followTarget) or 1, 1, 99999)
+    else
+        cfg.followTarget = pick
+    end
+
+    cfg.cruiseAltY   = ui.promptNumber("ALTITUD DE VUELO (Y abs)", cfg.cruiseAltY or 120, -64, 320)
+    cfg.chunkPadding = ui.promptNumber("TOLERANCIA (chunks)",      cfg.chunkPadding or 0, 0, 4)
+    return cfg
+end
+
+-- ============================================================
+-- QUARRY CONFIG
+-- Dos sub-modos:
+--   miner    = excava un rectangulo top-down y descarga via ender chest
+--   unloader = saca items del ender chest y los pasa a un cofre normal
+-- ============================================================
+
+local function configureQuarry(cfg)
+    cfg.mode = ui.menu("MODO QUARRY", {
+        { label = "Miner - excava top-down",   value = "miner" },
+        { label = "Unloader - vacia el ender", value = "unloader" },
+    }, cfg.mode == "unloader" and 2 or 1)
+
+    if cfg.mode == "miner" then
+        cfg.width    = ui.promptNumber("ANCHO (X)",                cfg.width or 8, 2, 32)
+        cfg.length   = ui.promptNumber("LARGO (Z)",                cfg.length or 8, 2, 32)
+        cfg.maxDepth = ui.promptNumber("PROFUNDIDAD (0=bedrock)", cfg.maxDepth or 64, 0, 320)
+        cfg.dumpThreshold = ui.promptNumber("SLOTS ANTES DE DESCARGAR",
+            cfg.dumpThreshold or 13, 4, 15)
+    else
+        local sideIdx = ({ front = 1, right = 2, back = 3, left = 4 })[cfg.storageSide or "front"] or 1
+        cfg.storageSide = ui.menu("SIDE DEL COFRE DE DESTINO", {
+            { label = "Front - delante",   value = "front" },
+            { label = "Right - derecha",   value = "right" },
+            { label = "Back - detras",     value = "back" },
+            { label = "Left - izquierda",  value = "left" },
+        }, sideIdx)
+        cfg.sleepSecs = ui.promptNumber("SEGUNDOS POR CICLO VACIO",
+            cfg.sleepSecs or 5, 1, 60)
+    end
+
+    return cfg
+end
+
+-- ============================================================
 -- DISPATCH POR ROL
 -- ============================================================
 
@@ -134,6 +201,8 @@ local CONFIGURATORS = {
     lumber = configureLumber,
     farmer = configureFarmer,
     scout  = configureScout,
+    loader = configureLoader,
+    quarry = configureQuarry,
     client = function(cfg) return cfg end,
 }
 
@@ -183,6 +252,24 @@ local function confirmAndShow(cfg)
             term.write("Box    : " .. tostring(s.boxW) .. "x" .. tostring(s.boxL) .. " step " .. tostring(s.stepSpacing))
         end
         term.setCursorPos(2, y+2); term.write("Y scan=" .. tostring(s.scanAltY) .. " safe=" .. tostring(s.safeAltY))
+    elseif cfg.role == "loader" and cfg.loader then
+        local ld = cfg.loader
+        term.setCursorPos(2, y);   term.write("Target : " .. tostring(ld.followTarget))
+        term.setCursorPos(2, y+1); term.write("Cruise : Y=" .. tostring(ld.cruiseAltY) .. " abs")
+        term.setCursorPos(2, y+2); term.write("Pad    : " .. tostring(ld.chunkPadding) .. " chunks")
+    elseif cfg.role == "quarry" and cfg.quarry then
+        local q = cfg.quarry
+        term.setCursorPos(2, y); term.write("Modo   : " .. tostring(q.mode))
+        if q.mode == "miner" then
+            term.setCursorPos(2, y+1)
+            term.write("Box    : " .. tostring(q.width) .. "x" .. tostring(q.length)
+                .. " depth=" .. (q.maxDepth == 0 and "bedrock" or tostring(q.maxDepth)))
+            term.setCursorPos(2, y+2)
+            term.write("Dump   : " .. tostring(q.dumpThreshold) .. " slots  ender=" .. tostring(q.enderSlot))
+        else
+            term.setCursorPos(2, y+1); term.write("Side   : " .. tostring(q.storageSide))
+            term.setCursorPos(2, y+2); term.write("Sleep  : " .. tostring(q.sleepSecs) .. "s")
+        end
     end
 
     term.setCursorPos(2, h - 1)

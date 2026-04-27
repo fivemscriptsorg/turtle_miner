@@ -26,13 +26,16 @@ local FILES = {
     "lib/movement.lua",
     "lib/remote.lua",
     "lib/swarm.lua",
+    "lib/localctrl.lua",
     "mining/mining.lua",
     "lumber/lumber.lua",
     "farmer/farmer.lua",
     "scout/scout.lua",
+    "loader/loader.lua",
+    "quarry/quarry.lua",
 }
 
-local DIRS = { "lib", "mining", "lumber", "farmer", "scout" }
+local DIRS = { "lib", "mining", "lumber", "farmer", "scout", "loader", "quarry" }
 
 local args = { ... }
 local skipSelfUpdate = (args[1] == "--post-update")

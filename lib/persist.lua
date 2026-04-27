@@ -30,6 +30,11 @@ local PERSIST_FIELDS = {
     "farmRow", "farmCol", "farmCycle", "cropsHarvested",
     -- scout runtime
     "scansDone",
+    -- quarry runtime
+    "quarryMode",
+    "quarryRow", "quarryCol", "quarryLayer",
+    "quarryDirection", "quarryRowDir", "quarryDone",
+    "unloadCycles", "unloadStuck",
 }
 
 function save()

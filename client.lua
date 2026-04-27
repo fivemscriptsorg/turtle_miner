@@ -71,6 +71,8 @@ local MODE_BADGE = {
     lumber = "L",
     farmer = "F",
     scout  = "S",
+    loader = "CH",
+    quarry = "Q",
     client = "C",
 }
 
@@ -79,6 +81,8 @@ local MODE_FULL = {
     lumber = "LUMBER",
     farmer = "FARMER",
     scout  = "SCOUT",
+    loader = "LOADER",
+    quarry = "QUARRY",
     client = "CLIENT",
 }
 
@@ -119,6 +123,15 @@ local function progressOf(s)
         return "cyc:" .. (s.farmCycle or 0)
     elseif m == "scout" then
         return "scn:" .. (s.scansDone or 0)
+    elseif m == "loader" then
+        return "tgt:" .. tostring(s.liveTargetId or s.followTarget or "-")
+    elseif m == "quarry" then
+        if (s.quarryMode or "miner") == "unloader" then
+            return "uc:" .. tostring(s.unloadCycles or 0)
+        end
+        return "L" .. tostring(s.quarryLayer or 0)
+            .. ":" .. tostring(s.quarryRow or 0)
+            .. "," .. tostring(s.quarryCol or 0)
     end
     if s.shaftLength and s.shaftLength > 0 then
         return (s.currentStep or 0) .. "/" .. s.shaftLength
@@ -213,6 +226,17 @@ local function renderSingle(targetId, lastStatus, lastUpdate, messageLog)
                 s.scansDone or 0, s.oresFound or 0))
             print(string.format(" OreMap : %d entradas compartidas",
                 s.oreMapSize or 0))
+        elseif m == "loader" then
+            print(string.format(" Follow : %s  (live=%s)",
+                tostring(s.followTarget or "-"), tostring(s.liveTargetId or "-")))
+            print(string.format(" Cruise : Y=%s  pad=%s chunk",
+                tostring(s.cruiseAltY or "-"), tostring(s.chunkPadding or 0)))
+            if s.lastTargetAbs then
+                print(string.format(" Target : (%d,%d,%d)",
+                    s.lastTargetAbs.x, s.lastTargetAbs.y, s.lastTargetAbs.z))
+            else
+                print(" Target : (desconocido)")
+            end
         else
             local progPct = (s.shaftLength and s.shaftLength > 0)
                 and (s.currentStep / s.shaftLength) or 0
@@ -252,7 +276,11 @@ local function renderSingle(targetId, lastStatus, lastUpdate, messageLog)
     term.setCursorPos(1, h - 1)
     print(string.rep("-", w))
     term.setCursorPos(1, h)
-    term.write(" [P]ause [R]esume [H]ome [S]top [Space] [B]ack [Q]uit")
+    if modeOf(lastStatus) == "loader" then
+        term.write(" [P]au [R]es [H]om [S]top [T]arget [B]ack [Q]uit")
+    else
+        term.write(" [P]ause [R]esume [H]ome [S]top [Space] [B]ack [Q]uit")
+    end
 end
 
 local function eventLine(msg, senderId)
@@ -312,6 +340,34 @@ local function singleView(targetId)
         end
     end
 
+    local function promptFollow()
+        term.clear(); term.setCursorPos(1, 1)
+        print("Cambiar target (rol loader)")
+        print("--------------------------------")
+        print("[A] Modo auto")
+        print("[N] Introducir ID num")
+        print("[B] Cancelar")
+        while true do
+            local _, key = os.pullEvent("key")
+            if key == keys.a then
+                rednet.send(targetId, { action = "follow", auto = true }, PROTOCOL)
+                addLog("-> follow auto")
+                return
+            elseif key == keys.n then
+                term.clear(); term.setCursorPos(1, 1)
+                write("ID > ")
+                local id = tonumber(read())
+                if id then
+                    rednet.send(targetId, { action = "follow", targetId = id }, PROTOCOL)
+                    addLog("-> follow #" .. id)
+                end
+                return
+            elseif key == keys.b or key == keys.backspace then
+                return
+            end
+        end
+    end
+
     local function input()
         while true do
             local _, key = os.pullEvent("key")
@@ -324,6 +380,7 @@ local function singleView(targetId)
             elseif key == keys.h then sendCmd("home"); render()
             elseif key == keys.s then sendCmd("stop"); render()
             elseif key == keys.space then sendCmd("status")
+            elseif key == keys.t then promptFollow(); render()
             end
         end
     end

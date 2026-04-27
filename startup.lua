@@ -21,12 +21,15 @@ os.loadAPI("lib/movement.lua")
 os.loadAPI("lib/peripherals.lua")
 os.loadAPI("lib/remote.lua")
 os.loadAPI("lib/swarm.lua")
+os.loadAPI("lib/localctrl.lua")
 os.loadAPI("lib/config.lua")
 if turtle then
     os.loadAPI("mining/mining.lua")
     os.loadAPI("lumber/lumber.lua")
     os.loadAPI("farmer/farmer.lua")
     os.loadAPI("scout/scout.lua")
+    os.loadAPI("loader/loader.lua")
+    os.loadAPI("quarry/quarry.lua")
 end
 
 -- ============================================================
@@ -75,7 +78,8 @@ _G.state = defaultState()
 -- ============================================================
 
 local function modeLabel(m)
-    local labels = { mining = "MINING", lumber = "LUMBER", farmer = "FARMER", scout = "SCOUT", client = "CLIENT" }
+    local labels = { mining = "MINING", lumber = "LUMBER", farmer = "FARMER",
+        scout = "SCOUT", loader = "LOADER", quarry = "QUARRY", client = "CLIENT" }
     return labels[m] or "?"
 end
 
@@ -97,6 +101,14 @@ local function askResume(saved)
     elseif m == "scout" then
         term.write("Scout   : " .. tostring(saved.scoutPatrol or "?")
             .. "  scans=" .. tostring(saved.scansDone or 0))
+    elseif m == "quarry" then
+        if (saved.quarryMode or "miner") == "unloader" then
+            term.write("Unloader: ciclos=" .. tostring(saved.unloadCycles or 0))
+        else
+            term.write("Layer " .. tostring(saved.quarryLayer or 0)
+                .. "  fila " .. tostring(saved.quarryRow or 0)
+                .. " col " .. tostring(saved.quarryCol or 0))
+        end
     else
         term.write("Patron  : " .. tostring(saved.pattern)
             .. "  " .. tostring(saved.currentStep) .. "/" .. tostring(saved.shaftLength))
@@ -128,6 +140,10 @@ local function dispatchRole(role)
         farmer.run()
     elseif role == "scout" then
         scout.run()
+    elseif role == "loader" then
+        loader.run()
+    elseif role == "quarry" then
+        quarry.run()
     elseif role == "client" then
         -- Cargar y ejecutar client.lua directamente
         shell.run("/client.lua")
@@ -185,7 +201,15 @@ local function main()
                 state[k] = v
             end
             state.resuming = true
+        elseif choice == "delete" then
+            -- Borrar checkpoint Y config, volver a preguntar todo
+            persist.clear()
+            roleconfig.clear()
+            _G.state = defaultState()
+            cfg = config.wizardFromScratch()
+            roleconfig.applyToState(cfg)
         else
+            -- "new": limpia checkpoint pero conserva la config
             persist.clear()
         end
     end
@@ -198,15 +222,22 @@ local function main()
         swarm.requestSync()
     end
 
-    -- 5. Ejecutar programa + listener en paralelo
+    -- 5. Ejecutar programa + listeners en paralelo
+    -- localctrl corre siempre (control por teclado pegado a la turtle),
+    -- remote.listener solo si hay modem. Cada coroutine tiene su propia
+    -- cola de eventos (ver docs de parallel) asi que no compiten.
     if state.hasRemote then
         parallel.waitForAny(
             function() dispatchRole(cfg.role) end,
-            function() remote.listener() end
+            function() remote.listener() end,
+            function() localctrl.listener() end
         )
         remote.shutdown()
     else
-        dispatchRole(cfg.role)
+        parallel.waitForAny(
+            function() dispatchRole(cfg.role) end,
+            function() localctrl.listener() end
+        )
     end
 
     ui.finalReport()

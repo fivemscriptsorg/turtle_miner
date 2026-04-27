@@ -65,6 +65,10 @@ function isChest(name)
     return name == "minecraft:chest" or name == "minecraft:trapped_chest"
 end
 
+function isEnderChest(name)
+    return name == "minecraft:ender_chest"
+end
+
 function isOre(name)
     if not name then return false end
     return name:find("_ore$") ~= nil

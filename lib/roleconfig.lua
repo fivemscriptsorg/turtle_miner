@@ -54,6 +54,23 @@ DEFAULTS = {
         stepSpacing = 12,         -- separacion entre scans en box mode
         sleepSecs   = 30,         -- espera entre ciclos completos
     },
+    loader = {
+        followTarget = "auto",    -- number (id) | string (hostname) | "auto"
+        cruiseAltY   = 120,       -- altitud absoluta de vuelo
+        chunkPadding = 0,         -- chunks de tolerancia (0 = mismo chunk)
+    },
+    quarry = {
+        mode          = "miner",     -- "miner" | "unloader"
+        width         = 8,            -- W: a lo ancho (eje +Z respecto al inicio)
+        length        = 8,            -- L: a lo largo (eje +X)
+        maxDepth      = 64,           -- 0 = bajar hasta bedrock
+        enderSlot     = 1,            -- slot reservado para minecraft:ender_chest
+        fuelSlot      = 16,           -- slot reservado para combustible
+        dumpThreshold = 13,           -- slots ocupados antes de descargar
+        -- unloader-only
+        storageSide   = "front",     -- "front"|"back"|"left"|"right"
+        sleepSecs     = 5,            -- nap cuando el ender chest viene vacio
+    },
     client = {},
 }
 
@@ -70,7 +87,7 @@ end
 -- Roles validos por tipo de dispositivo
 function rolesFor(deviceType)
     if deviceType == "turtle" then
-        return { "mining", "lumber", "farmer", "scout" }
+        return { "mining", "lumber", "farmer", "scout", "loader", "quarry" }
     end
     return { "client" }
 end
@@ -173,4 +190,22 @@ function applyToState(cfg)
     state.scoutScanRadius  = s.scanRadius
     state.scoutStepSpacing = s.stepSpacing
     state.scoutSleepSecs   = s.sleepSecs
+
+    -- Loader (chunky follower)
+    local ld = cfg.loader or DEFAULTS.loader
+    state.followTarget = ld.followTarget
+    state.cruiseAltY   = ld.cruiseAltY
+    state.chunkPadding = ld.chunkPadding
+
+    -- Quarry
+    local q = cfg.quarry or DEFAULTS.quarry
+    state.quarryMode      = q.mode
+    state.quarryWidth     = q.width
+    state.quarryLength    = q.length
+    state.quarryMaxDepth  = q.maxDepth
+    state.enderSlot       = q.enderSlot
+    state.fuelSlot        = q.fuelSlot
+    state.dumpThreshold   = q.dumpThreshold
+    state.storageSide     = q.storageSide
+    state.unloadSleepSecs = q.sleepSecs
 end
