@@ -72,6 +72,10 @@ function snapshot()
     if swarm and swarm.mapSize then
         pcall(function() mapSize = swarm.mapSize() end)
     end
+    local petInfo = nil
+    if pet and pet.snapshotFields then
+        pcall(function() petInfo = pet.snapshotFields() end)
+    end
     return {
         hostname      = state.hostname,
         mode          = state.mode or "mining",
@@ -139,6 +143,8 @@ function snapshot()
         slotsUsed     = used,
         remoteCmd     = state.remoteCmd,
         startEpoch    = state.startEpoch,
+        -- pet (Tamagotchi)
+        pet           = petInfo,
     }
 end
 

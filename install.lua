@@ -27,6 +27,7 @@ local FILES = {
     "lib/remote.lua",
     "lib/swarm.lua",
     "lib/localctrl.lua",
+    "lib/pet.lua",
     "mining/mining.lua",
     "lumber/lumber.lua",
     "farmer/farmer.lua",

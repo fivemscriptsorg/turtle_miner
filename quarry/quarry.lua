@@ -36,6 +36,7 @@ local function inspectAndLog(direction)
     if ok and data and inventory.isOre(data.name) then
         state.oresFound = state.oresFound + 1
         ui.logOre(data.name, state.y)
+        if pet then pcall(pet.feedOre, data.name) end
         if state.hasRemote then
             pcall(remote.notifyEvent, "ore", { name = data.name, y = state.y })
             local orePos = { x = state.x, y = state.y, z = state.z }

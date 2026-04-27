@@ -182,6 +182,7 @@ end
 local MODE_LABEL = {
     mining = "MINING", lumber = "LUMBER",
     farmer = "FARMER", scout  = "SCOUT",
+    quarry = "QUARRY", loader = "LOADER",
 }
 
 local FACING_LABEL = { [0] = "+X", [1] = "+Z", [2] = "-X", [3] = "-Z" }
@@ -251,10 +252,14 @@ function drawDashboard()
 
     -- Progreso mode-aware (fila 5)
     local mo = state.mode or "mining"
+    -- When the pet is rendered on the right (cols 32-38), shrink the bar
+    -- from 14 to 12 chars so there's headroom for "n/N" before the sprite.
+    local petActive = pet and (mo == "mining" or mo == "quarry")
+    local pBarLen = petActive and 12 or 14
     if mo == "mining" and state.shaftLength and state.shaftLength > 0 then
         local pct = (state.currentStep or 0) / state.shaftLength
         writeAt(2, 5, string.format("Prog  %s %d/%d",
-            barStr(pct, 14), state.currentStep or 0, state.shaftLength))
+            barStr(pct, pBarLen), state.currentStep or 0, state.shaftLength))
     elseif mo == "lumber" then
         writeAt(2, 5, string.format("Logs  %d    ciclo %d",
             state.logsHarvested or 0, state.farmCycle or 0))
@@ -319,6 +324,12 @@ function drawDashboard()
     -- Ultimo evento (fila 12)
     if #eventLog > 0 then
         writeAt(1, 12, " ~ " .. eventLog[#eventLog])
+    end
+
+    -- Pet (cols 32-38, rows 5-7 + nameplate row 8) - mining/quarry only
+    if petActive then
+        pcall(pet.tick)
+        pcall(pet.draw, 32, 5)
     end
 
     -- Key hints (fila 13)

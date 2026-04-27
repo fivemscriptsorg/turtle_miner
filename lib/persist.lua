@@ -37,6 +37,9 @@ local PERSIST_FIELDS = {
     "dropChests",
     "surfaceFila", "surfaceTargetIdx",
     "resupplyReturn", "awaitingResupply",
+    -- pet runtime (Tamagotchi cat)
+    "petName", "petHunger", "petXp", "petLevel",
+    "petLastFedAt", "petLastBigFeedAt", "petStarvingNotified",
 }
 
 function save()

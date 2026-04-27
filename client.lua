@@ -536,8 +536,19 @@ local function fleetView()
                 else n = s.oresFound or 0
                 end
 
-                local line = string.format(" %-2d %-12s %-4s %-16s %-5s %-4s %-9s %d",
-                    i, name, badge, pos, fuel, st, prog, n)
+                -- Pet badge: <mood><hunger>L<level>, e.g. "^H80L3"
+                local petStr = ""
+                if s.pet then
+                    local moodChar = ({
+                        excited = "*", eating = "@", happy = "^",
+                        idle = ".", hungry = "!", starving = "X", sleepy = "z",
+                    })[s.pet.mood] or "."
+                    petStr = string.format(" %sH%dL%d",
+                        moodChar, s.pet.hunger or 0, s.pet.level or 1)
+                end
+
+                local line = string.format(" %-2d %-12s %-4s %-16s %-5s %-4s %-9s %d%s",
+                    i, name, badge, pos, fuel, st, prog, n, petStr)
                 print(line:sub(1, w))
                 if i >= 9 then break end
             end

@@ -22,6 +22,7 @@ os.loadAPI("lib/peripherals.lua")
 os.loadAPI("lib/remote.lua")
 os.loadAPI("lib/swarm.lua")
 os.loadAPI("lib/localctrl.lua")
+os.loadAPI("lib/pet.lua")
 os.loadAPI("lib/config.lua")
 if turtle then
     os.loadAPI("mining/mining.lua")
@@ -220,6 +221,7 @@ local function main()
     end
 
     -- 4. Peripherals + remote + swarm
+    if pet and pet.init then pet.init() end
     peripherals.detect()
     remote.init()
     if state.hasRemote then
@@ -235,13 +237,15 @@ local function main()
         parallel.waitForAny(
             function() dispatchRole(cfg.role) end,
             function() remote.listener() end,
-            function() localctrl.listener() end
+            function() localctrl.listener() end,
+            function() if pet and pet.animator then pet.animator() end end
         )
         remote.shutdown()
     else
         parallel.waitForAny(
             function() dispatchRole(cfg.role) end,
-            function() localctrl.listener() end
+            function() localctrl.listener() end,
+            function() if pet and pet.animator then pet.animator() end end
         )
     end
 
