@@ -391,7 +391,13 @@ local function descendOne()
     end
     if not movement.safeDown() then return false end
     state.quarryLayer = (state.quarryLayer or 0) + 1
-    state.quarryRowDir = -(state.quarryRowDir or 1)
+    -- La capa anterior termino en una esquina con colDir y rowDir
+    -- apuntando "hacia afuera" del rectangulo. Al snake-back-ear
+    -- la siguiente capa hay que flipear AMBAS direcciones, no solo
+    -- rowDir, sino la primera fila de la nueva capa solo mina UNA
+    -- celda antes de detectar rowEnd y saltar a la siguiente fila.
+    state.quarryRowDir    = -(state.quarryRowDir or 1)
+    state.quarryDirection = -(state.quarryDirection or 1)
     return true
 end
 

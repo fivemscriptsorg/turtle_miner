@@ -166,9 +166,11 @@ end
 -- ============================================================
 
 local function configureQuarry(cfg)
-    cfg.width    = ui.promptNumber("ANCHO (X)",                cfg.width or 8, 2, 32)
-    cfg.length   = ui.promptNumber("LARGO (Z)",                cfg.length or 8, 2, 32)
-    cfg.maxDepth = ui.promptNumber("PROFUNDIDAD (0=bedrock)", cfg.maxDepth or 64, 0, 320)
+    -- length = direccion en que mira la turtle al empezar (+X)
+    -- width  = perpendicular, hacia su derecha (+Z)
+    cfg.length   = ui.promptNumber("LARGO (adelante, +X)",     cfg.length or 8, 2, 32)
+    cfg.width    = ui.promptNumber("ANCHO (lateral, +Z)",      cfg.width or 8, 2, 32)
+    cfg.maxDepth = ui.promptNumber("PROFUNDIDAD (0=bedrock)",  cfg.maxDepth or 64, 0, 320)
     cfg.dumpThreshold = ui.promptNumber("SLOTS ANTES DE COLOCAR COFRE",
         cfg.dumpThreshold or 13, 4, 15)
     return cfg
