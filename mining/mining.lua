@@ -162,10 +162,9 @@ end
 -- ============================================================
 
 local function checkRemoteCmd()
-    if not state.hasRemote then return false end
     local cmd = state.remoteCmd
     if cmd == "pause" then
-        ui.setStatus("PAUSADO (remoto)")
+        ui.setStatus("PAUSADO - pulsa R para seguir")
         while state.remoteCmd == "pause" do
             sleep(0.3)
         end
@@ -223,9 +222,17 @@ end
 -- ============================================================
 
 local function runBranchMining()
-    local facingStart = state.facing
-    state.sliceLane = 0
-    state.passFacing = facingStart
+    -- En resume: respetar passFacing/sliceLane guardados. state.facing
+    -- puede estar en lane lateral, asi que no sirve como facingStart.
+    local facingStart
+    if state.resuming and state.passFacing ~= nil then
+        facingStart = state.passFacing
+        state.sliceLane = state.sliceLane or 0
+    else
+        facingStart = state.facing
+        state.sliceLane = 0
+        state.passFacing = facingStart
+    end
 
     local startStep = (state.currentStep or 0) + 1
 
@@ -286,8 +293,12 @@ end
 -- ============================================================
 
 local function runTunnelMining()
-    state.sliceLane = 0
-    state.passFacing = state.facing
+    if state.resuming and state.passFacing ~= nil then
+        state.sliceLane = state.sliceLane or 0
+    else
+        state.sliceLane = 0
+        state.passFacing = state.facing
+    end
 
     local startStep = (state.currentStep or 0) + 1
 
@@ -364,6 +375,7 @@ function run()
     else
         runTunnelMining()
     end
+    state.resuming = false
 
     -- Comando "stop" remoto: guarda checkpoint y termina sin volver
     if state.remoteCmd == "stop" then

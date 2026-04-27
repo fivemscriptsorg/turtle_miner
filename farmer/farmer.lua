@@ -46,9 +46,8 @@ local CROPS = {
 -- ============================================================
 
 local function checkRemoteCmd()
-    if not state.hasRemote then return false end
     if state.remoteCmd == "pause" then
-        ui.setStatus("PAUSADO (remoto)")
+        ui.setStatus("PAUSADO - pulsa R para seguir")
         while state.remoteCmd == "pause" do sleep(0.3) end
         ui.setStatus("Reanudando")
         if state.remoteCmd == "resume" then state.remoteCmd = nil end
