@@ -417,8 +417,12 @@ end
 
 -- ============================================================
 -- RUN UNLOADER
--- Estatica. ender chest encima, cofre destino en storageSide.
--- Loop: suckUp hasta vaciar, girar hacia el destino, drop, volver.
+-- Estatica. La turtle MISMA coloca su ender chest arriba cada
+-- ciclo (asi el jugador no necesita perder un eye of ender):
+--   1) placeUp ender chest (slot enderSlot)
+--   2) suckUp hasta vaciar el ender chest
+--   3) digUp para recuperar el cofre
+--   4) si trajo items, girar a storageSide y dropear al cofre destino
 -- ============================================================
 
 local SIDE_TURNS = {
@@ -438,22 +442,77 @@ local function turnBack(side)
     for _ = 1, n do movement.turnLeft() end
 end
 
+-- Coloca el ender chest arriba. Devuelve el slot donde estaba o nil.
+local function placeEnderChestUp()
+    local slot = findEnderSlot()
+    if not slot then return nil end
+
+    -- Limpiar arriba (puede haber arena/grava o un cofre fantasma)
+    if turtle.detectUp() then
+        digCounting(turtle.digUp, turtle.detectUp)
+        sleep(0.15)
+        if turtle.detectUp() then digCounting(turtle.digUp, turtle.detectUp) end
+    end
+
+    local prevSelect = turtle.getSelectedSlot()
+    turtle.select(slot)
+    local ok = turtle.placeUp()
+    if not ok then
+        sleep(0.3)
+        if turtle.detectUp() then digCounting(turtle.digUp, turtle.detectUp) end
+        ok = turtle.placeUp()
+    end
+    turtle.select(prevSelect)
+    return ok and slot or nil
+end
+
+-- Recoge el ender chest de arriba con 3 reintentos.
+local function recoverEnderChestUp(slot)
+    if slot then turtle.select(slot) end
+    for _ = 1, 3 do
+        if turtle.digUp() then return true end
+        sleep(0.2)
+    end
+    return false
+end
+
 local function unloaderTick()
-    -- Vaciar el ender chest hacia el inventario propio (hasta 16 stacks)
+    -- 1) Colocar el ender chest arriba
+    local slot = placeEnderChestUp()
+    if not slot then
+        state.unloadStuck = true
+        ui.setStatus("Sin ender chest!")
+        return false
+    end
+
+    -- 2) Vaciar el ender chest hacia el inventario propio
     local pulled = false
-    for _ = 1, 16 do
+    for _ = 1, 64 do
         if not turtle.suckUp() then break end
         pulled = true
     end
+
+    -- 3) Recoger el cofre antes de mover items (asi el slot queda libre por si acaso)
+    if not recoverEnderChestUp(slot) then
+        ui.setStatus("Ender chest perdido!")
+        state.enderLost = true
+        -- seguimos: aun podemos dropear lo que tengamos
+    end
+
     if not pulled then return false end
 
-    -- Girar al cofre destino, dropear todo, volver
+    -- 4) Girar al cofre destino y dropear todo lo que NO sea ender chest ni fuel
     turnTo(state.storageSide)
     local stuck = false
+    local enderSlot = state.enderSlot or 1
+    local fuelSlot  = state.fuelSlot  or 16
     for i = 1, 16 do
-        if turtle.getItemCount(i) > 0 then
-            turtle.select(i)
-            if not turtle.drop() then stuck = true end
+        if i ~= enderSlot and i ~= fuelSlot and turtle.getItemCount(i) > 0 then
+            local d = turtle.getItemDetail(i)
+            if d and not inventory.isEnderChest(d.name) and not inventory.isFuel(d.name) then
+                turtle.select(i)
+                if not turtle.drop() then stuck = true end
+            end
         end
     end
     state.unloadStuck = stuck
