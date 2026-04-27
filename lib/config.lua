@@ -160,35 +160,17 @@ end
 
 -- ============================================================
 -- QUARRY CONFIG
--- Dos sub-modos:
---   miner    = excava un rectangulo top-down y descarga via ender chest
---   unloader = saca items del ender chest y los pasa a un cofre normal
+-- Una sola turtle excava un rectangulo top-down. Cuando se llena
+-- coloca cofres flotando. Al terminar levanta los cofres y los
+-- consolida en superficie en filas de 2 cofres dobles apilados.
 -- ============================================================
 
 local function configureQuarry(cfg)
-    cfg.mode = ui.menu("MODO QUARRY", {
-        { label = "Miner - excava top-down",   value = "miner" },
-        { label = "Unloader - vacia el ender", value = "unloader" },
-    }, cfg.mode == "unloader" and 2 or 1)
-
-    if cfg.mode == "miner" then
-        cfg.width    = ui.promptNumber("ANCHO (X)",                cfg.width or 8, 2, 32)
-        cfg.length   = ui.promptNumber("LARGO (Z)",                cfg.length or 8, 2, 32)
-        cfg.maxDepth = ui.promptNumber("PROFUNDIDAD (0=bedrock)", cfg.maxDepth or 64, 0, 320)
-        cfg.dumpThreshold = ui.promptNumber("SLOTS ANTES DE DESCARGAR",
-            cfg.dumpThreshold or 13, 4, 15)
-    else
-        local sideIdx = ({ front = 1, right = 2, back = 3, left = 4 })[cfg.storageSide or "front"] or 1
-        cfg.storageSide = ui.menu("SIDE DEL COFRE DE DESTINO", {
-            { label = "Front - delante",   value = "front" },
-            { label = "Right - derecha",   value = "right" },
-            { label = "Back - detras",     value = "back" },
-            { label = "Left - izquierda",  value = "left" },
-        }, sideIdx)
-        cfg.sleepSecs = ui.promptNumber("SEGUNDOS POR CICLO VACIO",
-            cfg.sleepSecs or 5, 1, 60)
-    end
-
+    cfg.width    = ui.promptNumber("ANCHO (X)",                cfg.width or 8, 2, 32)
+    cfg.length   = ui.promptNumber("LARGO (Z)",                cfg.length or 8, 2, 32)
+    cfg.maxDepth = ui.promptNumber("PROFUNDIDAD (0=bedrock)", cfg.maxDepth or 64, 0, 320)
+    cfg.dumpThreshold = ui.promptNumber("SLOTS ANTES DE COLOCAR COFRE",
+        cfg.dumpThreshold or 13, 4, 15)
     return cfg
 end
 
@@ -259,17 +241,9 @@ local function confirmAndShow(cfg)
         term.setCursorPos(2, y+2); term.write("Pad    : " .. tostring(ld.chunkPadding) .. " chunks")
     elseif cfg.role == "quarry" and cfg.quarry then
         local q = cfg.quarry
-        term.setCursorPos(2, y); term.write("Modo   : " .. tostring(q.mode))
-        if q.mode == "miner" then
-            term.setCursorPos(2, y+1)
-            term.write("Box    : " .. tostring(q.width) .. "x" .. tostring(q.length)
-                .. " depth=" .. (q.maxDepth == 0 and "bedrock" or tostring(q.maxDepth)))
-            term.setCursorPos(2, y+2)
-            term.write("Dump   : " .. tostring(q.dumpThreshold) .. " slots  ender=" .. tostring(q.enderSlot))
-        else
-            term.setCursorPos(2, y+1); term.write("Side   : " .. tostring(q.storageSide))
-            term.setCursorPos(2, y+2); term.write("Sleep  : " .. tostring(q.sleepSecs) .. "s")
-        end
+        term.setCursorPos(2, y);   term.write("Box   : " .. tostring(q.width) .. "x" .. tostring(q.length))
+        term.setCursorPos(2, y+1); term.write("Depth : " .. (q.maxDepth == 0 and "bedrock" or tostring(q.maxDepth)))
+        term.setCursorPos(2, y+2); term.write("Dump  : " .. tostring(q.dumpThreshold) .. " slots")
     end
 
     term.setCursorPos(2, h - 1)

@@ -126,8 +126,13 @@ local function progressOf(s)
     elseif m == "loader" then
         return "tgt:" .. tostring(s.liveTargetId or s.followTarget or "-")
     elseif m == "quarry" then
-        if (s.quarryMode or "miner") == "unloader" then
-            return "uc:" .. tostring(s.unloadCycles or 0)
+        local ph = s.quarryPhase or "mine"
+        if ph == "lift" then
+            return "lift:" .. tostring(s.dropChestsCount or 0)
+        elseif ph == "consolidate" then
+            return "cons:f" .. tostring(s.surfaceFila or 0)
+        elseif ph == "done" then
+            return "done"
         end
         return "L" .. tostring(s.quarryLayer or 0)
             .. ":" .. tostring(s.quarryRow or 0)

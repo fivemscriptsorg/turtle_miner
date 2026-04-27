@@ -102,12 +102,17 @@ local function askResume(saved)
         term.write("Scout   : " .. tostring(saved.scoutPatrol or "?")
             .. "  scans=" .. tostring(saved.scansDone or 0))
     elseif m == "quarry" then
-        if (saved.quarryMode or "miner") == "unloader" then
-            term.write("Unloader: ciclos=" .. tostring(saved.unloadCycles or 0))
-        else
+        local ph = saved.quarryPhase or "mine"
+        if ph == "mine" then
             term.write("Layer " .. tostring(saved.quarryLayer or 0)
                 .. "  fila " .. tostring(saved.quarryRow or 0)
                 .. " col " .. tostring(saved.quarryCol or 0))
+        elseif ph == "lift" then
+            term.write("Lift: quedan " .. tostring(saved.dropChests and #saved.dropChests or 0) .. " cofres")
+        elseif ph == "consolidate" then
+            term.write("Consolidate: fila " .. tostring(saved.surfaceFila or 0))
+        else
+            term.write("Phase: " .. tostring(ph))
         end
     else
         term.write("Patron  : " .. tostring(saved.pattern)

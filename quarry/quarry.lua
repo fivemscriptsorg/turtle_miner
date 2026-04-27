@@ -1,26 +1,30 @@
 -- ============================================================
 -- QUARRY MODULE
--- Excava un rectangulo top-down y descarga via ender chest.
--- Dos sub-modos:
---   miner    = la turtle excava un W x L rectangulo capa por capa,
---              descendiendo. Cuando se llena coloca un ender chest
---              arriba, dropea, lo recoge, sigue.
---   unloader = estatica al lado de un cofre normal. Saca items del
---              ender chest (encima de ella) y los pasa al cofre.
+-- Excava un rectangulo W x L top-down. Cuando el inventario se
+-- llena, coloca un cofre normal arriba (placeUp), dropea, y deja
+-- el cofre flotando ahi (no recovery). Anota la posicion en
+-- state.dropChests y sigue minando.
 --
--- Convencion de coordenadas (igual que el resto):
---   Turtle empieza en (0,0,0) mirando +X (facing=0).
---   length L = a lo largo de +X.
---   width  W = a lo largo de +Z (perpendicular, "derecha").
---   layer  = numero de descensos hechos. y = -quarryLayer.
+-- Al terminar el quarry: fase LIFT. Visita cada cofre subterraneo
+-- (de arriba abajo), succiona su contenido, recupera el cofre con
+-- digUp (vanilla chest se dropea entero, sin silk touch).
 --
--- Ender chest comparte inventario globalmente (vanilla minecraft:
--- ender_chest sin canales). El unloader saca de su ender chest y
--- el miner mete en el suyo: estan conectados.
+-- Si el inventario se llena durante el lift: fase CONSOLIDATE.
+-- Sube a superficie, coloca filas de 2 cofres dobles apilados
+-- (4 cofres por fila) en linea -X desde el origen, con 1 bloque
+-- de gap entre filas. El jugador encuentra el botin en superficie.
+--
+-- Sin slots reservados. Cofres y fuel se buscan dinamicamente
+-- (isChest cubre chest+trapped_chest, isFuel cubre coal+charcoal+
+-- coal_block).
+--
+-- Si la turtle se queda sin cofres o sin fuel: fase RESUPPLY.
+-- Vuelve a (0,0,0), espera a que el jugador rellene y pulse R.
+-- Al reanudar, refuel al maximo posible y vuelve a su posicion.
 -- ============================================================
 
 -- ============================================================
--- HELPERS COMPARTIDOS (copia de mining/mining.lua para no acoplar)
+-- ORE TRACKING (copia de mining/mining.lua para no acoplar)
 -- ============================================================
 
 local function inspectAndLog(direction)
@@ -35,10 +39,8 @@ local function inspectAndLog(direction)
         if state.hasRemote then
             pcall(remote.notifyEvent, "ore", { name = data.name, y = state.y })
             local orePos = { x = state.x, y = state.y, z = state.z }
-            if direction == "up" then
-                orePos.y = orePos.y + 1
-            elseif direction == "down" then
-                orePos.y = orePos.y - 1
+            if direction == "up" then orePos.y = orePos.y + 1
+            elseif direction == "down" then orePos.y = orePos.y - 1
             else
                 if state.facing == 0 then orePos.x = orePos.x + 1
                 elseif state.facing == 1 then orePos.z = orePos.z + 1
@@ -62,48 +64,43 @@ local function digCounting(fn, detectFn)
     return false
 end
 
--- Devuelve true si hay que abortar el loop (home/stop). Bloquea en pause.
+-- ============================================================
+-- REMOTE / RESUME CONTROL
+-- ============================================================
+
 local function checkRemoteCmd()
     local cmd = state.remoteCmd
     if cmd == "pause" then
         ui.setStatus("PAUSADO - pulsa R para seguir")
-        while state.remoteCmd == "pause" do
-            sleep(0.3)
-        end
+        while state.remoteCmd == "pause" do sleep(0.3) end
         ui.setStatus("Reanudando")
-        if state.remoteCmd == "resume" then
-            state.remoteCmd = nil
-        end
+        if state.remoteCmd == "resume" then state.remoteCmd = nil end
     end
-    if state.remoteCmd == "home" or state.remoteCmd == "stop" then
-        return true
-    end
+    if state.remoteCmd == "home" or state.remoteCmd == "stop" then return true end
     return false
 end
 
--- ============================================================
--- BEDROCK / IRROMPIBLES
--- ============================================================
-
-local function isBedrock(name)
-    return name == "minecraft:bedrock"
+local function waitForResume()
+    while state.remoteCmd ~= "resume"
+        and state.remoteCmd ~= "home"
+        and state.remoteCmd ~= "stop" do
+        sleep(0.3)
+    end
+    if state.remoteCmd == "resume" then state.remoteCmd = nil end
 end
 
--- Mina el bloque debajo. Devuelve:
---   "ok"      = excavado o ya era aire
---   "bedrock" = bedrock detectado, abortar quarry
---   "blocked" = algo irrompible debajo (lava-source, obsidiana sin pico, etc)
+-- ============================================================
+-- BEDROCK / MINE CELL
+-- ============================================================
+
+local function isBedrock(name) return name == "minecraft:bedrock" end
+
 local function mineCellDown()
     inspectAndLog("down")
     local ok, data = turtle.inspectDown()
-    if ok and data and isBedrock(data.name) then
-        return "bedrock"
-    end
-
+    if ok and data and isBedrock(data.name) then return "bedrock" end
     if not turtle.detectDown() then return "ok" end
-
     digCounting(turtle.digDown, turtle.detectDown)
-    -- Reintento por si cae arena/grava encima de inmediato
     for _ = 1, 3 do
         if not turtle.detectDown() then return "ok" end
         digCounting(turtle.digDown, turtle.detectDown)
@@ -114,47 +111,103 @@ local function mineCellDown()
 end
 
 -- ============================================================
--- ENDER CHEST DUMP
--- Coloca el ender chest arriba (encima esta vacio por construccion:
--- la turtle acaba de bajar desde alli). Dropea slots 2..15 menos
--- fuel y ender chests. Recupera el cofre con digUp.
+-- NAVIGATION
+-- Manhattan: Y first, then X, then Z. Funciona dentro del volumen
+-- minado (todo aire), y por encima del quarry (aire o terreno
+-- que safe* digiere automaticamente).
 -- ============================================================
 
-local function findEnderSlot()
-    -- Preferir el slot reservado, si tiene ender chest.
-    local reserved = state.enderSlot or 1
-    local d = turtle.getItemDetail(reserved)
-    if d and inventory.isEnderChest(d.name) then return reserved end
-    -- Fallback: buscar en cualquier slot
-    return inventory.findSlot(inventory.isEnderChest)
+local function ascendToY(targetY)
+    while state.y < targetY do
+        if not movement.safeUp() then return false end
+    end
+    return true
 end
 
-local function dumpToEnderChest()
-    ui.setStatus("Descargando ender chest")
+local function descendToY(targetY)
+    while state.y > targetY do
+        if not movement.safeDown() then return false end
+    end
+    return true
+end
+
+local function moveToX(targetX)
+    if state.x == targetX then return true end
+    movement.faceDirection(state.x < targetX and 0 or 2)
+    while state.x ~= targetX do
+        if not movement.safeForward() then return false end
+    end
+    return true
+end
+
+local function moveToZ(targetZ)
+    if state.z == targetZ then return true end
+    movement.faceDirection(state.z < targetZ and 1 or 3)
+    while state.z ~= targetZ do
+        if not movement.safeForward() then return false end
+    end
+    return true
+end
+
+local function navigateTo(tx, ty, tz)
+    if state.y < ty then ascendToY(ty)
+    elseif state.y > ty then descendToY(ty) end
+    moveToX(tx)
+    moveToZ(tz)
+end
+
+-- ============================================================
+-- INVENTORY: BUSCAR COFRE / FUEL DINAMICAMENTE
+-- ============================================================
+
+local function findAnyChestSlot()
+    return inventory.findSlot(inventory.isChest)
+end
+
+-- Dropea slots con items que no sean cofres ni fuel
+local function dropAllNonReserved(dropFn)
+    for i = 1, 16 do
+        local d = turtle.getItemDetail(i)
+        if d and not inventory.isChest(d.name) and not inventory.isFuel(d.name) then
+            turtle.select(i)
+            dropFn()
+        end
+    end
+end
+
+local function hasNonReservedItems()
+    for i = 1, 16 do
+        local d = turtle.getItemDetail(i)
+        if d and not inventory.isChest(d.name) and not inventory.isFuel(d.name) then
+            return true
+        end
+    end
+    return false
+end
+
+-- ============================================================
+-- DUMP DURING MINING
+-- placeUp un cofre vanilla, dropea slots no reservados, deja el
+-- cofre flotando arriba. Anota la pos en state.dropChests.
+-- Devuelve true | "no_chest" | false
+-- ============================================================
+
+local function placeWallChest()
     inventory.compact()
     inventory.dropJunk()
-    if inventory.slotsUsed() < (state.dumpThreshold or 13) then
-        return true
-    end
+    if inventory.slotsUsed() < (state.dumpThreshold or 13) then return true end
 
-    -- Limpiar arriba (puede haber arena que cayo)
+    local slot = findAnyChestSlot()
+    if not slot then return "no_chest" end
+
     if turtle.detectUp() then
         digCounting(turtle.digUp, turtle.detectUp)
         sleep(0.15)
         if turtle.detectUp() then digCounting(turtle.digUp, turtle.detectUp) end
     end
 
-    local slot = findEnderSlot()
-    if not slot then
-        ui.setStatus("Sin ender chest!")
-        sleep(1)
-        -- Fallback: cofre normal a la derecha si hay
-        return inventory.placeChest()
-    end
-
-    local prevSelect = turtle.getSelectedSlot()
+    local prev = turtle.getSelectedSlot()
     turtle.select(slot)
-
     local placed = turtle.placeUp()
     if not placed then
         sleep(0.3)
@@ -162,47 +215,92 @@ local function dumpToEnderChest()
         placed = turtle.placeUp()
     end
     if not placed then
-        ui.setStatus("No pude colocar ender")
-        turtle.select(prevSelect)
+        turtle.select(prev)
         return false
     end
 
-    -- Dropear todo menos fuel y ender chests
-    local enderSlot = state.enderSlot or 1
-    local fuelSlot  = state.fuelSlot  or 16
-    for i = 1, 16 do
-        if i ~= enderSlot and i ~= fuelSlot then
-            local d = turtle.getItemDetail(i)
-            if d and not inventory.isEnderChest(d.name) and not inventory.isFuel(d.name) then
-                turtle.select(i)
-                turtle.dropUp()
-            end
-        end
-    end
+    state.dropChests = state.dropChests or {}
+    table.insert(state.dropChests, { x = state.x, y = state.y + 1, z = state.z })
+    state.chestsPlaced = (state.chestsPlaced or 0) + 1
 
-    -- Recuperar el ender chest. Reintenta 3 veces si arena cae.
-    turtle.select(slot)
-    local recovered = false
-    for _ = 1, 3 do
-        if turtle.digUp() then recovered = true; break end
-        sleep(0.2)
-    end
-    if not recovered then
-        ui.setStatus("Ender chest perdido!")
-        state.enderLost = true
-    else
-        state.chestsPlaced = (state.chestsPlaced or 0) + 1
-    end
-
-    turtle.select(prevSelect)
-    return recovered
+    dropAllNonReserved(turtle.dropUp)
+    turtle.select(prev)
+    return true
 end
 
 -- ============================================================
--- SAFE FORWARD CON RETORNO
--- safeForward retorna false tras 8 retries; lo elevamos a un
--- helper que registra el evento y decide si bailar.
+-- RESUPPLY (fallback C)
+-- Vuelve a (0,0,0), espera, recarga al maximo, vuelve.
 -- ============================================================
+
+local function navigateHome()
+    while state.y < 0 do
+        if not movement.safeUp() then break end
+    end
+    if state.x ~= 0 then
+        movement.faceDirection(state.x > 0 and 2 or 0)
+        while state.x ~= 0 do
+            if not movement.safeForward() then break end
+        end
+    end
+    if state.z ~= 0 then
+        movement.faceDirection(state.z > 0 and 3 or 1)
+        while state.z ~= 0 do
+            if not movement.safeForward() then break end
+        end
+    end
+    movement.faceDirection(0)
+end
+
+local function awaitResupply(why)
+    state.resupplyReturn = {
+        x = state.x, y = state.y, z = state.z, facing = state.facing,
+    }
+    persist.save()
+
+    ui.setStatus("Vuelvo: " .. (why or "sin recursos"))
+    navigateHome()
+
+    state.awaitingResupply = true
+    persist.save()
+
+    ui.setStatus("Sin recursos - rellena y pulsa R")
+    waitForResume()
+    state.awaitingResupply = false
+
+    -- Refuel al maximo posible
+    local fuelLimit = turtle.getFuelLimit()
+    if fuelLimit ~= "unlimited" and fuelLimit and fuelLimit > 0 then
+        inventory.autoRefuel(fuelLimit)
+    end
+
+    if state.resupplyReturn then
+        local r = state.resupplyReturn
+        navigateTo(r.x, r.y, r.z)
+        movement.faceDirection(r.facing)
+        state.resupplyReturn = nil
+    end
+    persist.save()
+end
+
+local function dumpOrResupply()
+    while true do
+        local r = placeWallChest()
+        if r == true then return true end
+        if r == "no_chest" then
+            awaitResupply("sin cofres")
+        else
+            return false
+        end
+    end
+end
+
+-- ============================================================
+-- SNAKE LAYER
+-- ============================================================
+
+local function faceLength(dir) movement.faceDirection(dir > 0 and 0 or 2) end
+local function faceWidth(dir)  movement.faceDirection(dir > 0 and 1 or 3) end
 
 local function tryStepForward()
     inspectAndLog("forward")
@@ -210,29 +308,22 @@ local function tryStepForward()
     return movement.safeForward()
 end
 
--- ============================================================
--- SNAKE LAYER (lawnmower)
--- Estado:
---   state.quarryRow  ∈ [0, W-1]   fila a lo largo del eje width (+Z)
---   state.quarryCol  ∈ [0, L-1]   col a lo largo del eje length (+X)
---   state.quarryDirection ∈ {+1,-1}  direccion en la fila actual
---   state.quarryRowDir    ∈ {+1,-1}  direccion en el eje rows entre layers
--- ============================================================
-
-local function faceLength(dir)
-    -- dir +1 → facing 0 (+X), dir -1 → facing 2 (-X)
-    movement.faceDirection(dir > 0 and 0 or 2)
-end
-
-local function faceWidth(dir)
-    -- dir +1 → facing 1 (+Z), dir -1 → facing 3 (-Z)
-    movement.faceDirection(dir > 0 and 1 or 3)
+local function checkFuelOrResupply()
+    local fuel = turtle.getFuelLevel()
+    if fuel == "unlimited" then return end
+    -- Reserva: poder volver a (0,0,0) + colchon
+    local needed = math.abs(state.x) + math.abs(state.z) + math.abs(state.y) + 30
+    if fuel >= needed then return end
+    inventory.autoRefuel(needed)
+    if turtle.getFuelLevel() < needed then
+        awaitResupply("fuel critico")
+    end
 end
 
 local function mineLayer(W, L)
     local rowDir = state.quarryRowDir or 1
     local colDir = state.quarryDirection or 1
-    state.quarryRowDir    = rowDir
+    state.quarryRowDir = rowDir
     state.quarryDirection = colDir
 
     local row = state.quarryRow or 0
@@ -242,10 +333,8 @@ local function mineLayer(W, L)
         state.quarryRow = row
         state.quarryDirection = colDir
 
-        -- Recorre la fila desde col actual hasta el extremo
         while col >= 0 and col < L do
             if checkRemoteCmd() then return "interrupt" end
-
             state.quarryCol = col
 
             local r = mineCellDown()
@@ -253,51 +342,39 @@ local function mineLayer(W, L)
                 state.quarryDone = true
                 return "bedrock"
             end
-            -- "blocked" (irrompible) → seguimos, registramos, no bloquea quarry
 
             if inventory.slotsUsed() >= (state.dumpThreshold or 13) then
-                dumpToEnderChest()
+                dumpOrResupply()
             end
 
-            -- Refuel preventivo: si el viaje a casa supera lo que tenemos, intenta refuel
-            local fuel = turtle.getFuelLevel()
-            if fuel ~= "unlimited" then
-                local needed = math.abs(state.x) + math.abs(state.z) + math.abs(state.y) + 30
-                if fuel < needed then
-                    inventory.autoRefuel(needed)
-                end
-            end
-
+            checkFuelOrResupply()
             persist.save()
 
-            -- Avanzar al siguiente col en esta fila
             local nextCol = col + colDir
             local atRowEnd = (colDir > 0 and nextCol >= L) or (colDir < 0 and nextCol < 0)
             if atRowEnd then break end
 
             faceLength(colDir)
             if not tryStepForward() then
-                ui.setStatus("Columna bloqueada, salto fila")
+                ui.setStatus("Columna bloqueada")
                 break
             end
             col = nextCol
         end
 
-        -- Fin de fila. Hay siguiente?
         local nextRow = row + rowDir
         local atLastRow = (rowDir > 0 and nextRow >= W) or (rowDir < 0 and nextRow < 0)
         if atLastRow then break end
 
-        -- Cruzar al siguiente row (1 paso lateral)
         faceWidth(rowDir)
         if not tryStepForward() then
-            ui.setStatus("Lateral bloqueado, capa parcial")
+            ui.setStatus("Lateral bloqueado")
             break
         end
 
         row = nextRow
         colDir = -colDir
-        state.quarryRow       = row
+        state.quarryRow = row
         state.quarryDirection = colDir
     end
 
@@ -306,12 +383,7 @@ local function mineLayer(W, L)
     return "done"
 end
 
--- ============================================================
--- DESCEND ENTRE LAYERS
--- ============================================================
-
 local function descendOne()
-    -- Mira primero abajo: si bedrock, abortar
     local ok, data = turtle.inspectDown()
     if ok and data and isBedrock(data.name) then
         state.quarryDone = true
@@ -319,71 +391,34 @@ local function descendOne()
     end
     if not movement.safeDown() then return false end
     state.quarryLayer = (state.quarryLayer or 0) + 1
-    -- Reset row al inicio del nuevo barrido (snake-back: invertimos rowDir)
     state.quarryRowDir = -(state.quarryRowDir or 1)
-    -- col y row se mantienen donde acabamos para snake seamless
     return true
 end
 
 -- ============================================================
--- RETURN TO START
--- Sube hasta y=0, vuelve a (0,0,0), encara +X.
+-- MINING PHASE
 -- ============================================================
 
-local function returnToStart()
-    ui.setStatus("Subiendo...")
-    while state.y < 0 do
-        if not movement.safeUp() then break end
-    end
-
-    ui.setStatus("Volviendo a origen")
-    -- Volver a x=0
-    if state.x ~= 0 then
-        movement.faceDirection(state.x > 0 and 2 or 0)
-        while state.x ~= 0 do
-            if not movement.safeForward() then break end
-        end
-    end
-    -- Volver a z=0
-    if state.z ~= 0 then
-        movement.faceDirection(state.z > 0 and 3 or 1)
-        while state.z ~= 0 do
-            if not movement.safeForward() then break end
-        end
-    end
-    movement.faceDirection(0)
-
-    -- Descarga final
-    if inventory.slotsUsed() > 0 then
-        ui.setStatus("Descarga final")
-        dumpToEnderChest()
-    end
-end
-
--- ============================================================
--- RUN MINER
--- ============================================================
-
-local function runMiner()
-    local W = state.quarryWidth  or 8
+local function runMine()
+    local W = state.quarryWidth or 8
     local L = state.quarryLength or 8
-    local maxDepth = state.quarryMaxDepth or 64  -- 0 = bedrock
+    local maxDepth = state.quarryMaxDepth or 64
 
-    -- Init runtime si no estamos resumiendo
     if not state.resuming then
-        state.quarryRow       = 0
-        state.quarryCol       = 0
+        state.quarryRow = 0
+        state.quarryCol = 0
         state.quarryDirection = 1
-        state.quarryRowDir    = 1
-        state.quarryLayer     = 0
-        state.quarryDone      = false
+        state.quarryRowDir = 1
+        state.quarryLayer = 0
+        state.quarryDone = false
+        state.dropChests = {}
+        state.surfaceFila = 0
+        state.surfaceTargetIdx = 1
     end
-
-    ui.drawDashboard()
-    ui.setStatus("Quarry " .. W .. "x" .. L .. " miner")
+    state.quarryPhase = "mine"
 
     while not state.quarryDone do
-        if checkRemoteCmd() then break end
+        if checkRemoteCmd() then return "interrupt" end
 
         ui.drawDashboard()
         ui.setStatus(string.format("Capa %d  fila %d/%d  col %d/%d",
@@ -391,170 +426,158 @@ local function runMiner()
             (state.quarryCol or 0) + 1, L))
 
         local r = mineLayer(W, L)
-        if r == "interrupt" or r == "bedrock" then break end
+        if r == "interrupt" then return "interrupt" end
+        if r == "bedrock" then break end
 
-        -- Limite por profundidad (0 = bajar hasta bedrock)
         if maxDepth > 0 and (state.quarryLayer or 0) + 1 >= maxDepth then
             state.quarryDone = true
             break
         end
-
-        -- Descender al siguiente layer
         if not descendOne() then break end
     end
-    state.resuming = false
 
-    -- "stop" remoto: dejar checkpoint y salir sin volver
-    if state.remoteCmd == "stop" then
-        ui.setStatus("STOP remoto - checkpoint OK")
-        persist.save()
-        return
-    end
-
-    returnToStart()
-    persist.clear()
+    state.quarryPhase = "lift"
+    persist.save()
+    return "done"
 end
 
 -- ============================================================
--- RUN UNLOADER
--- Estatica. La turtle MISMA coloca su ender chest arriba cada
--- ciclo (asi el jugador no necesita perder un eye of ender):
---   1) placeUp ender chest (slot enderSlot)
---   2) suckUp hasta vaciar el ender chest
---   3) digUp para recuperar el cofre
---   4) si trajo items, girar a storageSide y dropear al cofre destino
+-- SURFACE CONSOLIDATION
+-- 4 targets per fila, 1-block lateral gap entre filas.
 -- ============================================================
 
-local SIDE_TURNS = {
-    front = 0,
-    right = 1,
-    back  = 2,
-    left  = 3,
-}
+-- forward decl para que liftProtocol pueda llamar
+local consolidateOnSurface
 
-local function turnTo(side)
-    local n = SIDE_TURNS[side or "front"] or 0
-    for _ = 1, n do movement.turnRight() end
+local function surfaceTarget(filaIdx, targetIdx)
+    local baseZ = filaIdx * 3
+    if     targetIdx == 1 then return { x = 0, y = 0, z = baseZ,     face = 2 }
+    elseif targetIdx == 2 then return { x = 0, y = 0, z = baseZ + 1, face = 2 }
+    elseif targetIdx == 3 then return { x = 0, y = 1, z = baseZ + 1, face = 2 }
+    elseif targetIdx == 4 then return { x = 0, y = 1, z = baseZ,     face = 2 }
+    end
+    return nil
 end
 
-local function turnBack(side)
-    local n = SIDE_TURNS[side or "front"] or 0
-    for _ = 1, n do movement.turnLeft() end
-end
+-- Coloca un cofre en target si no hay ya uno, y dropea slots no reservados.
+local function consolidateAtTarget(target)
+    navigateTo(target.x, target.y, target.z)
+    movement.faceDirection(target.face)
 
--- Coloca el ender chest arriba. Devuelve el slot donde estaba o nil.
-local function placeEnderChestUp()
-    local slot = findEnderSlot()
-    if not slot then return nil end
-
-    -- Limpiar arriba (puede haber arena/grava o un cofre fantasma)
-    if turtle.detectUp() then
-        digCounting(turtle.digUp, turtle.detectUp)
-        sleep(0.15)
-        if turtle.detectUp() then digCounting(turtle.digUp, turtle.detectUp) end
-    end
-
-    local prevSelect = turtle.getSelectedSlot()
-    turtle.select(slot)
-    local ok = turtle.placeUp()
-    if not ok then
-        sleep(0.3)
-        if turtle.detectUp() then digCounting(turtle.digUp, turtle.detectUp) end
-        ok = turtle.placeUp()
-    end
-    turtle.select(prevSelect)
-    return ok and slot or nil
-end
-
--- Recoge el ender chest de arriba con 3 reintentos.
-local function recoverEnderChestUp(slot)
-    if slot then turtle.select(slot) end
-    for _ = 1, 3 do
-        if turtle.digUp() then return true end
-        sleep(0.2)
-    end
-    return false
-end
-
-local function unloaderTick()
-    -- 1) Colocar el ender chest arriba
-    local slot = placeEnderChestUp()
-    if not slot then
-        state.unloadStuck = true
-        ui.setStatus("Sin ender chest!")
-        return false
-    end
-
-    -- 2) Vaciar el ender chest hacia el inventario propio
-    local pulled = false
-    for _ = 1, 64 do
-        if not turtle.suckUp() then break end
-        pulled = true
-    end
-
-    -- 3) Recoger el cofre antes de mover items (asi el slot queda libre por si acaso)
-    if not recoverEnderChestUp(slot) then
-        ui.setStatus("Ender chest perdido!")
-        state.enderLost = true
-        -- seguimos: aun podemos dropear lo que tengamos
-    end
-
-    if not pulled then return false end
-
-    -- 4) Girar al cofre destino y dropear todo lo que NO sea ender chest ni fuel
-    turnTo(state.storageSide)
-    local stuck = false
-    local enderSlot = state.enderSlot or 1
-    local fuelSlot  = state.fuelSlot  or 16
-    for i = 1, 16 do
-        if i ~= enderSlot and i ~= fuelSlot and turtle.getItemCount(i) > 0 then
-            local d = turtle.getItemDetail(i)
-            if d and not inventory.isEnderChest(d.name) and not inventory.isFuel(d.name) then
-                turtle.select(i)
-                if not turtle.drop() then stuck = true end
+    if turtle.detect() then
+        local ok, data = turtle.inspect()
+        if ok and data and not inventory.isChest(data.name) then
+            -- Terreno (tierra/hierba/etc): cavar y colocar
+            digCounting(turtle.dig, turtle.detect)
+            sleep(0.15)
+            local cs = findAnyChestSlot()
+            if not cs then return "no_chest" end
+            local prev = turtle.getSelectedSlot()
+            turtle.select(cs)
+            if not turtle.place() then
+                turtle.select(prev)
+                return "place_failed"
             end
+            turtle.select(prev)
         end
+        -- si ya es un cofre, perfecto, dropeamos directo
+    else
+        -- aire: colocar cofre nuevo
+        local cs = findAnyChestSlot()
+        if not cs then return "no_chest" end
+        local prev = turtle.getSelectedSlot()
+        turtle.select(cs)
+        if not turtle.place() then
+            turtle.select(prev)
+            return "place_failed"
+        end
+        turtle.select(prev)
     end
-    state.unloadStuck = stuck
-    turnBack(state.storageSide)
-    turtle.select(1)
 
-    state.unloadCycles = (state.unloadCycles or 0) + 1
-    return true
+    dropAllNonReserved(turtle.drop)
+    return "ok"
 end
 
-local function runUnloader()
-    state.unloadCycles = state.unloadCycles or 0
-    state.unloadStuck  = false
+consolidateOnSurface = function()
+    state.surfaceFila      = state.surfaceFila or 0
+    state.surfaceTargetIdx = state.surfaceTargetIdx or 1
 
-    ui.drawDashboard()
-    ui.setStatus("Unloader " .. tostring(state.storageSide or "front"))
+    while hasNonReservedItems() do
+        if checkRemoteCmd() then return "interrupt" end
 
-    while true do
-        if checkRemoteCmd() then break end
+        local target = surfaceTarget(state.surfaceFila, state.surfaceTargetIdx)
+        if not target then break end
 
         ui.drawDashboard()
-        if state.unloadStuck then
-            ui.setStatus("Cofre destino LLENO!")
+        ui.setStatus(string.format("Conso fila %d t%d  slots %d",
+            state.surfaceFila, state.surfaceTargetIdx, inventory.slotsUsed()))
+
+        local r = consolidateAtTarget(target)
+        if r == "no_chest" then
+            awaitResupply("sin cofres en superficie")
+            -- no avanzamos targetIdx; reintentamos
+        elseif r == "place_failed" then
+            -- avanzamos para no atascarnos
+            state.surfaceTargetIdx = state.surfaceTargetIdx + 1
         else
-            ui.setStatus(string.format("Ciclos %d  side=%s",
-                state.unloadCycles or 0, tostring(state.storageSide or "front")))
+            state.surfaceTargetIdx = state.surfaceTargetIdx + 1
         end
 
-        local moved = unloaderTick()
-        if not moved then
-            sleep(state.unloadSleepSecs or 5)
-        else
-            -- breve pausa para no saturar
+        if state.surfaceTargetIdx > 4 then
+            state.surfaceFila      = state.surfaceFila + 1
+            state.surfaceTargetIdx = 1
+        end
+
+        persist.save()
+    end
+
+    return "done"
+end
+
+-- ============================================================
+-- LIFT PROTOCOL
+-- Visita cada cofre subterraneo, succiona, recupera el cofre.
+-- ============================================================
+
+local function liftProtocol()
+    state.dropChests = state.dropChests or {}
+    -- Mas superficiales primero (Y mayor)
+    table.sort(state.dropChests, function(a, b) return a.y > b.y end)
+
+    local total = #state.dropChests
+
+    while #state.dropChests > 0 do
+        if checkRemoteCmd() then return "interrupt" end
+
+        local target = state.dropChests[1]
+        local doneCount = total - #state.dropChests + 1
+
+        ui.drawDashboard()
+        ui.setStatus(string.format("Lift %d/%d  (%d,%d,%d)",
+            doneCount, total, target.x, target.y, target.z))
+
+        -- Posicion de succion: directamente DEBAJO del cofre
+        navigateTo(target.x, target.y - 1, target.z)
+
+        for _ = 1, 64 do
+            if not turtle.suckUp() then break end
+        end
+
+        -- Recuperar el cofre vanilla (digUp lo dropea como item)
+        for _ = 1, 3 do
+            if turtle.digUp() then break end
             sleep(0.2)
         end
+
+        table.remove(state.dropChests, 1)
+        persist.save()
+
+        if inventory.slotsUsed() >= 14 then
+            consolidateOnSurface()
+        end
     end
 
-    if state.remoteCmd == "stop" then
-        persist.save()
-    else
-        persist.clear()
-    end
+    return "done"
 end
 
 -- ============================================================
@@ -568,10 +591,50 @@ function run()
         sleep(0.8)
     end
 
-    local mode = state.quarryMode or "miner"
-    if mode == "unloader" then
-        runUnloader()
-    else
-        runMiner()
+    local phase = state.quarryPhase or "mine"
+
+    if phase == "mine" then
+        local r = runMine()
+        if r == "interrupt" then
+            state.resuming = false
+            return
+        end
+        phase = state.quarryPhase or "lift"
     end
+
+    if phase == "lift" then
+        local r = liftProtocol()
+        if r == "interrupt" then
+            state.resuming = false
+            return
+        end
+        state.quarryPhase = "consolidate"
+        persist.save()
+        phase = "consolidate"
+    end
+
+    if phase == "consolidate" then
+        local r = consolidateOnSurface()
+        if r == "interrupt" then
+            state.resuming = false
+            return
+        end
+        state.quarryPhase = "done"
+        persist.save()
+    end
+
+    state.resuming = false
+
+    if state.remoteCmd == "stop" then
+        ui.setStatus("STOP - checkpoint OK")
+        return
+    end
+
+    -- Volver al origen, encarar +X
+    ui.setStatus("Volviendo al origen")
+    navigateTo(0, 0, 0)
+    movement.faceDirection(0)
+
+    persist.clear()
+    ui.setStatus("Quarry completado!")
 end

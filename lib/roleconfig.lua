@@ -60,16 +60,10 @@ DEFAULTS = {
         chunkPadding = 0,         -- chunks de tolerancia (0 = mismo chunk)
     },
     quarry = {
-        mode          = "miner",     -- "miner" | "unloader"
         width         = 8,            -- W: a lo ancho (eje +Z respecto al inicio)
         length        = 8,            -- L: a lo largo (eje +X)
         maxDepth      = 64,           -- 0 = bajar hasta bedrock
-        enderSlot     = 1,            -- slot reservado para minecraft:ender_chest
-        fuelSlot      = 16,           -- slot reservado para combustible
-        dumpThreshold = 13,           -- slots ocupados antes de descargar
-        -- unloader-only
-        storageSide   = "front",     -- "front"|"back"|"left"|"right"
-        sleepSecs     = 5,            -- nap cuando el ender chest viene vacio
+        dumpThreshold = 13,           -- slots ocupados antes de colocar cofre
     },
     client = {},
 }
@@ -199,13 +193,8 @@ function applyToState(cfg)
 
     -- Quarry
     local q = cfg.quarry or DEFAULTS.quarry
-    state.quarryMode      = q.mode
     state.quarryWidth     = q.width
     state.quarryLength    = q.length
     state.quarryMaxDepth  = q.maxDepth
-    state.enderSlot       = q.enderSlot
-    state.fuelSlot        = q.fuelSlot
     state.dumpThreshold   = q.dumpThreshold
-    state.storageSide     = q.storageSide
-    state.unloadSleepSecs = q.sleepSecs
 end

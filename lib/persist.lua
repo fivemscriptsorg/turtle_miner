@@ -31,10 +31,12 @@ local PERSIST_FIELDS = {
     -- scout runtime
     "scansDone",
     -- quarry runtime
-    "quarryMode",
     "quarryRow", "quarryCol", "quarryLayer",
     "quarryDirection", "quarryRowDir", "quarryDone",
-    "unloadCycles", "unloadStuck",
+    "quarryPhase",
+    "dropChests",
+    "surfaceFila", "surfaceTargetIdx",
+    "resupplyReturn", "awaitingResupply",
 }
 
 function save()
