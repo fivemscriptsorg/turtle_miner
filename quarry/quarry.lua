@@ -540,8 +540,13 @@ local function surfaceTarget(filaIdx, targetIdx)
 end
 
 -- Coloca un cofre en target si no hay ya uno, y dropea slots no reservados.
+-- Usa navigateTo (no liftNavigate) — los movimientos en superficie son
+-- cortos (1-3 bloques entre targets adyacentes) y safeXxxQuarry ya
+-- succiona cualquier cofre que cruzara el path. Usar liftNavigate aqui
+-- forzaria un detour por -quarryLayer cada target, haciendo que la
+-- turtle baje al fondo y vuelva a subir entre cada cofre del muro.
 local function consolidateAtTarget(target)
-    liftNavigate(target.x, target.y, target.z)
+    navigateTo(target.x, target.y, target.z)
     movement.faceDirection(target.face)
 
     if turtle.detect() then
