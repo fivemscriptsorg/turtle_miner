@@ -116,18 +116,74 @@ end
 -- Manhattan: Y first, then X, then Z. Funciona dentro del volumen
 -- minado (todo aire), y por encima del quarry (aire o terreno
 -- que safe* digiere automaticamente).
+--
+-- IMPORTANT: las primitivas safeXxxQuarry succionan el contenido
+-- de cualquier cofre que detecten antes de que safeMove lo cave.
+-- Esto previene la perdida de items cuando el path del lift
+-- atraviesa cofres pendientes (o restos de runs anteriores).
 -- ============================================================
+
+-- Si hay un cofre en la direccion dada, vaciarlo con suck primero.
+-- Asi cuando safeUp/safeDown/safeForward lo cavan, los items ya
+-- estan en el inventario en lugar de tirarse al mundo.
+-- Tambien retira la entrada de state.dropChests si coincide.
+local function suckChestIfPresent(direction)
+    local inspectFn, suckFn
+    local ox, oy, oz = state.x, state.y, state.z
+    if direction == "up" then
+        inspectFn, suckFn = turtle.inspectUp, turtle.suckUp
+        oy = oy + 1
+    elseif direction == "down" then
+        inspectFn, suckFn = turtle.inspectDown, turtle.suckDown
+        oy = oy - 1
+    else
+        inspectFn, suckFn = turtle.inspect, turtle.suck
+        if state.facing == 0 then ox = ox + 1
+        elseif state.facing == 1 then oz = oz + 1
+        elseif state.facing == 2 then ox = ox - 1
+        elseif state.facing == 3 then oz = oz - 1 end
+    end
+    local ok, data = inspectFn()
+    if ok and data and inventory.isChest(data.name) then
+        for _ = 1, 64 do
+            if not suckFn() then break end
+        end
+        if state.dropChests then
+            for i = #state.dropChests, 1, -1 do
+                local c = state.dropChests[i]
+                if c.x == ox and c.y == oy and c.z == oz then
+                    table.remove(state.dropChests, i)
+                end
+            end
+        end
+    end
+end
+
+local function safeUpQuarry()
+    suckChestIfPresent("up")
+    return movement.safeUp()
+end
+
+local function safeDownQuarry()
+    suckChestIfPresent("down")
+    return movement.safeDown()
+end
+
+local function safeForwardQuarry()
+    suckChestIfPresent("forward")
+    return movement.safeForward()
+end
 
 local function ascendToY(targetY)
     while state.y < targetY do
-        if not movement.safeUp() then return false end
+        if not safeUpQuarry() then return false end
     end
     return true
 end
 
 local function descendToY(targetY)
     while state.y > targetY do
-        if not movement.safeDown() then return false end
+        if not safeDownQuarry() then return false end
     end
     return true
 end
@@ -136,7 +192,7 @@ local function moveToX(targetX)
     if state.x == targetX then return true end
     movement.faceDirection(state.x < targetX and 0 or 2)
     while state.x ~= targetX do
-        if not movement.safeForward() then return false end
+        if not safeForwardQuarry() then return false end
     end
     return true
 end
@@ -145,7 +201,7 @@ local function moveToZ(targetZ)
     if state.z == targetZ then return true end
     movement.faceDirection(state.z < targetZ and 1 or 3)
     while state.z ~= targetZ do
-        if not movement.safeForward() then return false end
+        if not safeForwardQuarry() then return false end
     end
     return true
 end
@@ -155,6 +211,23 @@ local function navigateTo(tx, ty, tz)
     elseif state.y > ty then descendToY(ty) end
     moveToX(tx)
     moveToZ(tz)
+end
+
+-- Navegacion segura para el lift+consolidate.
+-- Baja primero a la "Y segura" (capa mas profunda minada, donde no
+-- hay drop chests), luego se mueve horizontalmente, luego sube en
+-- la columna destino. Combinado con el sort column-aware bottom-up
+-- garantiza que el ascenso en columna destino no atraviesa cofres
+-- pendientes — esos cofres en la columna destino estan ARRIBA del
+-- target actual, fuera del path. El movimiento horizontal a safeY
+-- pasa por debajo de todos los cofres del quarry.
+local function liftNavigate(tx, ty, tz)
+    local safeY = -((state.quarryLayer or 0))
+    if state.y > safeY then descendToY(safeY) end
+    moveToX(tx)
+    moveToZ(tz)
+    if state.y < ty then ascendToY(ty)
+    elseif state.y > ty then descendToY(ty) end
 end
 
 -- ============================================================
@@ -468,7 +541,7 @@ end
 
 -- Coloca un cofre en target si no hay ya uno, y dropea slots no reservados.
 local function consolidateAtTarget(target)
-    navigateTo(target.x, target.y, target.z)
+    liftNavigate(target.x, target.y, target.z)
     movement.faceDirection(target.face)
 
     if turtle.detect() then
@@ -524,8 +597,17 @@ consolidateOnSurface = function()
             awaitResupply("sin cofres en superficie")
             -- no avanzamos targetIdx; reintentamos
         elseif r == "place_failed" then
-            -- avanzamos para no atascarnos
-            state.surfaceTargetIdx = state.surfaceTargetIdx + 1
+            -- Reintento una vez tras pausa breve (puede ser bloqueo
+            -- transient: sand cayendo, mob delante, etc).
+            sleep(0.5)
+            r = consolidateAtTarget(target)
+            if r == "no_chest" then
+                awaitResupply("sin cofres en superficie")
+            else
+                -- Si vuelve a fallar, avanzamos para no atascarnos.
+                -- Si ahora funciono, tambien avanzamos.
+                state.surfaceTargetIdx = state.surfaceTargetIdx + 1
+            end
         else
             state.surfaceTargetIdx = state.surfaceTargetIdx + 1
         end
@@ -548,8 +630,16 @@ end
 
 local function liftProtocol()
     state.dropChests = state.dropChests or {}
-    -- Mas superficiales primero (Y mayor)
-    table.sort(state.dropChests, function(a, b) return a.y > b.y end)
+    -- Column-aware bottom-up: agrupa por (x, z) en orden lexicografico
+    -- y dentro de cada columna procesa el cofre mas profundo primero.
+    -- Asi el ascenso por la columna nunca atraviesa un cofre que
+    -- todavia este en la cola — los pendientes de la columna estan
+    -- siempre ARRIBA del target actual.
+    table.sort(state.dropChests, function(a, b)
+        if a.x ~= b.x then return a.x < b.x end
+        if a.z ~= b.z then return a.z < b.z end
+        return a.y < b.y
+    end)
 
     local total = #state.dropChests
 
@@ -564,7 +654,7 @@ local function liftProtocol()
             doneCount, total, target.x, target.y, target.z))
 
         -- Posicion de succion: directamente DEBAJO del cofre
-        navigateTo(target.x, target.y - 1, target.z)
+        liftNavigate(target.x, target.y - 1, target.z)
 
         for _ = 1, 64 do
             if not turtle.suckUp() then break end
